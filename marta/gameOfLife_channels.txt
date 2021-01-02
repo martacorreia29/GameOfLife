@@ -1,0 +1,61 @@
+world : World
+world = Tile 0 True ((Tile 1 True (Tile 2 False (Tile 3 False Nil))))
+
+data World = Nil | Tile Int Bool World
+
+type TileChannel : SL = 
+	&{ Index : !Int; TileChannel,
+       State : !Bool; TileChannel,
+       Next 	: WorldChannel; TileChannel,
+	   Exit 	: Skip
+	}
+
+type WorldChannel : SL = 
+	+{ Tile: TileChannel,
+       Nil : Skip
+  	}
+
+client : forall a:SL => WorldChannel; a -> World -> a
+client c world = 
+	case world of {
+      Nil ->
+      	select Nil c,
+      Tile index state next ->
+      	clientTile[a] (select Tile c) index state next
+      }
+
+clientTile : forall a:SL => TileChannel; a -> Int -> Bool -> World -> a
+clientTile c index state next = 
+	match c with {
+      Index c ->
+      	clientTile[a] (send index c) index state next,
+      State c ->
+        clientTile[a] (send state c) index state next,    
+      Next c -> 
+      	let c = client[TileChannel;a] c next in
+      	clientTile[a] c index state next,
+	  Exit c ->
+      	c
+    }
+      
+server : forall a:SL => a dualof WorldChannel; a -> Int -> Bool -> a
+server s index state= 
+	match s	with {
+      Nil s -> 
+      	s,
+      Tile s ->
+      	serverTile[a] s index state
+    }
+
+serverTile : forall a:SL => a dualof TileChannel; a -> Int -> Bool -> a
+--serverTile c index state = 
+	
+
+main : ()
+main =
+  let (c, s) = new WorldChannel in
+  fork (sink (client[Skip] c world));
+  sink (server s)
+
+sink : Skip -> ()
+sink _ = ()
