@@ -1,13 +1,14 @@
 world : World
 world = Tile 0 True ((Tile 1 True (Tile 2 False (Tile 3 False Nil))))
 
+data Game = Size Int | RowSize Int | WordList World 
 data World = Nil | Tile Int Bool World
 
 type TileChannel : SL = 
 	&{ Index : !Int; TileChannel,
        State : !Bool; TileChannel,
-       Next 	: WorldChannel; TileChannel,
-	   Exit 	: Skip
+       Next  : WorldChannel; TileChannel,
+	   Exit  : Skip
 	}
 
 type WorldChannel : SL = 
@@ -15,8 +16,26 @@ type WorldChannel : SL =
        Nil : Skip
   	}
 
-client : forall a:SL => WorldChannel; a -> World -> a
-client c world = 
+type GameChannel : SL =
+	+{ Size : !Int,
+       RowSize: !Int, 
+       World : WorldChannel,
+       Exit : Skip
+    }
+
+client : forall a:SL => GameChannel; a -> Game -> a
+client c game = 
+	case game of {
+      Size size ->
+     	let (m,c) =	select Size in send m c,
+      RowSize rowsize -> 
+      	(send rowsize c),
+      WordList world ->
+      	clientWorld[a] (select World c) world
+    }
+
+clientWorld : forall a:SL => WorldChannel; a -> World -> a
+clientWorld c world = 
 	case world of {
       Nil ->
       	select Nil c,
@@ -32,14 +51,27 @@ clientTile c index state next =
       State c ->
         clientTile[a] (send state c) index state next,    
       Next c -> 
-      	let c = client[TileChannel;a] c next in
+      	let c = clientWorld[TileChannel;a] c next in
       	clientTile[a] c index state next,
 	  Exit c ->
       	c
     }
       
-server : forall a:SL => a dualof WorldChannel; a -> Int -> Bool -> a
-server s index state= 
+server : forall a:SL => dualof GameChannel; a -> Int -> Int -> World -> a
+server s size rowSize world =
+	match s with {
+       Size s ->
+      		let (newSize, s) = receive s in
+       		server[a] s newSize rowsize world,
+       RowSize s ->
+      		let (newRowSize, s) = receive s in
+       		server[dualof WorldChannel;a] s newRowSize rowsize world,
+       World s ->
+      		serverWorld[a] s size rowSize world 
+   }
+
+serverWorld : forall a:SL => dualof WorldChannel; a -> Int -> Bool -> a
+serverWorld s index state = 
 	match s	with {
       Nil s -> 
       	s,
@@ -47,13 +79,13 @@ server s index state=
       	serverTile[a] s index state
     }
 
-serverTile : forall a:SL => a dualof TileChannel; a -> Int -> Bool -> a
+serverTile : forall a:SL => dualof TileChannel; a -> Int -> Bool -> a
 --serverTile c index state = 
 	
 
 main : ()
 main =
-  let (c, s) = new WorldChannel in
+  let (c, s) = new GameChannel in
   fork (sink (client[Skip] c world));
   sink (server s)
 
