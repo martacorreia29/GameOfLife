@@ -51,37 +51,40 @@ clientTile c index state next =
       	c
     }
 
-server : forall a:SL => dualof GameChannel; a -> a
+server : forall a:SL => dualof GameChannel; a -> (World, a)
 server s =
 	match s with {
         World s ->
       		let (size, s) = receive s in
       		let (rowSize, s) = receive s in
-      		serverWorld[a] s size rowSize
+      		let (world, s) = serverWorld[a] s size rowSize in
+      		(world, s)
    }
 
-serverWorld : forall a:SL => dualof WorldChannel; a -> Int -> Int -> a
+serverWorld : forall a:SL => dualof WorldChannel; a -> Int -> Int -> (World, a)
 serverWorld s size rowSize =
 	match s	with {
       Nil s ->
-      	s,
+      	(Nil, s),
       Tile s ->
-      	serverTile[a] s size rowSize
+      	let (world, s) = serverTile[a] s size rowSize in
+      	(world, s)
     }
 
-serverTile : forall a:SL => dualof TileChannel; a -> Int -> Int -> a
+serverTile : forall a:SL => dualof TileChannel; a -> Int -> Int -> (World, a)
 serverTile s size rowSize =
 		let (index, s) = receive (select Index s) in
 		let (state, s) = receive (select State s) in
-		let s = serverWorld[dualof TileChannel; a] (select Next s) size rowSize in
-		(select Exit s)--(Tile index state next, s)
+		let c = (select Next s) in
+		let (next, s) = serverWorld[dualof TileChannel; a] c size rowSize in
+        (Tile index state next, select Exit s)
 
-
-main : ()
+main : World
 main =
   let (c, s) = new GameChannel in
   fork (sink (client[Skip] c 10 10 world));
-  sink (server[Skip] s)
+  let (world, s) = server[Skip] s in
+  world
 
 sink : Skip -> ()
 sink _ = ()
