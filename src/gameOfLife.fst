@@ -18,11 +18,12 @@ type WorldChannel : SL =
   	}
 
 type GameChannel : SL =
-	+{ World : !Int; !Int; WorldChannel}
+	+{ World : !Int; !Int; !Int; WorldChannel}
 
-client : forall a:SL => GameChannel; a -> Int -> Int -> World -> a
-client c size rowSize world =
+client : forall a:SL => GameChannel; a -> Int -> Int -> Int -> World -> a
+client c iterations size rowSize world =
 	        let c = select World c in
+			let c = send iterations c in
       		let c = send size c in
       		let c = send rowSize c in
        		let c = clientWorld[a] c world in
@@ -52,15 +53,16 @@ clientTile c index state next =
     }
 
 -- SERVER ------------------------------------------------------------------------------
-server : forall a:SL => dualof GameChannel; a -> (World, a)
+server : forall a:SL => dualof GameChannel; a -> a
 server s =
 	match s with {
         World s ->
+      		let (iterations, s) = receive s in
       		let (size, s) = receive s in
       		let (rowSize, s) = receive s in
       		let (world, s) = serverWorld[a] s size rowSize in
-      		let world = splitWork size rowSize world in
-      		(world, s)
+      		let world = splitWork iterations size rowSize world in
+      		s
    }
 
 serverWorld : forall a:SL => dualof WorldChannel; a -> Int -> Int -> (World, a)
@@ -82,9 +84,15 @@ serverTile s size rowSize =
         (Tile index state next, select Exit s)
 
 -- SERVER FUNCTIONS --------------------------------------------------------------------
-splitWork : Int -> Int -> World -> World
-splitWork size rowSize world =
-  	generate[Skip] world world rowSize
+splitWork : Int -> Int -> Int -> World -> World
+splitWork iterations size rowSize world =
+	if iterations == 0
+	then world
+	else
+		let newWorld = generate[Skip] world world rowSize in
+		let _ = printWorld[Skip] newWorld 10 in
+		let _ = printUnitLn (); printUnitLn () in
+  	splitWork (iterations - 1) size rowSize newWorld
 
 generate : forall a:SL => World -> World -> Int -> World
 generate world current rowSize =
@@ -143,11 +151,8 @@ countNeighbors world i rowSize =
 main : ()
 main =
   let (c, s) = new GameChannel in
-  fork (sink (client[Skip] c 99 10 (initWorld 99)));
-  let (world,s) = server[Skip] s in
-  let _ = printWorld[Skip] world 10 in
-  let _ = printUnitLn (); printUnitLn () in
-  ()
+  fork (sink (client[Skip] c 10 99 10 (initWorld 99)));
+  sink(server[Skip] s)
 
 initWorld : Int -> World
 initWorld n = if n == 0
