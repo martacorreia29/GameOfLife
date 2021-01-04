@@ -20,6 +20,11 @@ type WorldChannel : SL =
 type GameChannel : SL =
 	+{ World : !Int; !Int; !Int; WorldChannel}
 
+type ServerChannel : SL =
+	+{ World : !Int; !Int; !Int; WorldChannel }
+
+-- CLIENT --------------------------------------------------------------------
+
 client : forall a:SL => GameChannel; a -> Int -> Int -> Int -> World -> a
 client c iterations size rowSize world =
 	        let c = select World c in
@@ -83,16 +88,46 @@ serverTile s size rowSize =
 		let (next, s) = serverWorld[dualof TileChannel; a] c size rowSize in
         (Tile index state next, select Exit s)
 
+subserver : forall a:SL => dualof ServerChannel; a -> World
+subserver s =
+	match s with {
+        World s ->
+      		let (iterations, s) = receive s in
+      		let (size, s) = receive s in
+      		let (rowSize, s) = receive s in
+      		let (world, s) = serverWorld[a] s size rowSize in
+      		let world = splitWork iterations size rowSize world in
+      		s
+   }
+
 -- SERVER FUNCTIONS --------------------------------------------------------------------
 splitWork : Int -> Int -> Int -> World -> World
 splitWork iterations size rowSize world =
 	if iterations == 0
 	then world
 	else
-		let newWorld = generate[Skip] world world rowSize in
-		let _ = printWorld[Skip] newWorld 10 in
-		let _ = printUnitLn (); printUnitLn () in
-  	splitWork (iterations - 1) size rowSize newWorld
+		let (s1, s2) = new ServerChannel in
+		fork(sink(subserver s2 world world rowSize));
+		split s1 size rowSize 3 world
+
+	--let newWorld = generate[Skip] world world rowSize in
+	--let _ = printWorld[Skip] newWorld 10 in
+	--let _ = printUnitLn (); printUnitLn () in
+
+split : forall a:SL => ServerChannel; a -> Int -> Int -> Int -> World -> World
+split s1 size rowSize numLines world =
+		case world of {
+			Nil ->
+				select Nil c,
+			Tile index state next ->
+				clientTile[a] (select Tile c) index state next
+			}
+			
+			if numLines == 0
+			then
+			let (s1, s2) = new ServerChannel in
+			fork(sink(subserver s2 world world rowSize));
+			split s1 size rowSize 3 world
 
 generate : forall a:SL => World -> World -> Int -> World
 generate world current rowSize =
@@ -105,7 +140,7 @@ generate world current rowSize =
           			if b && numberOfNeighbors < 2 then False            -- underpopulation
           			else if b && numberOfNeighbors > 3 then False       -- overpopulation
           			else if (not b) && numberOfNeighbors == 3 then True -- reproduction
-                    else b in                                       -- Live on
+                    else b in                                       -- live on
           		let newList = generate[a] world l rowSize in
           		Tile x newState newList
     	}
