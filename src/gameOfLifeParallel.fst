@@ -2,8 +2,7 @@ world : World
 world = Tile 0 True ((Tile 1 True (Tile 2 False (Tile 3 False Nil))))
 
 data World = Nil | Tile Int Bool World
-
-type Game = Int -> Int -> World
+data ChannelList = Nul | C (dualof ServerChannel) ChannelList
 
 type TileChannel : SL =
 	&{ Index : !Int; TileChannel,
@@ -19,6 +18,9 @@ type WorldChannel : SL =
 
 type GameChannel : SL =
 	+{ World : !Int; !Int; !Int; WorldChannel}
+
+type ServerChannel : SL =
+	+{ World : WorldChannel}
 
 -- CLIENT --------------------------------------------------------------------
 
@@ -103,18 +105,17 @@ anotherWorld iterations size rowSize world =
 	if iterations == 1
 	then world
 	else
-		let newGen = splitWork size rowSize world Nil in
+		let newGen = splitWork size rowSize world Nul in
 		iterate (iterations-1) size rowSize newGen
 
 -- nextTile: the last after split
---
 splitWork : Int -> Int -> Int -> World -> ChannelList -> World
 splitWork size rowSize world channelList =
 	case world of {
 		Nil -> receiveWork channelList Nil,
 		Tile index state next ->
 				let (splitedWorld, nextTile) = split world rowSize in
-				let (s1, s2) = new GameChannel in
+				let (s1, s2) = new ServerChannel in
 				let _ = fork(sink(subserver s1 splitedWorld rowSize)) in
 				let channelList = (C s2 channelList) in
 				splitWork size rowSize world channelList
@@ -123,14 +124,39 @@ splitWork size rowSize world channelList =
 receiveWork : ChannelList -> World -> World
 receiveWork channelList world =
 	case channelList of {
-		Nil ->
-		 	world
+		Nul ->
+		 	world,
 		C c next ->
-		  let (worldPart, _ )= receive c in
-			Tile
+		  let world = serverReceive c world in
+			receiveWork c world
 	}
 
-data ChannelList = Nil | C GameChannel ChannelList
+serverReceive : forall a:SL => dualof ServerChannel; a -> World -> World
+serverReceive s tail =
+		match s with {
+					World s ->
+						let (world, s) = serverReceiveWorld[a] s tail in
+						world
+		 }
+
+serverReceiveWorld : forall a:SL => dualof WorldChannel; a -> World -> (World, a)
+serverReceiveWorld s tail =
+	match s	with {
+      Nil s ->
+      	(tail, s),
+      Tile s ->
+      	let (world, s) = serverReceiveTile[a] s tail in
+      	(world, s)
+    }
+
+serverReceiveTile : forall a:SL => dualof TileChannel; a -> (World, a)
+serverReceiveTile s tail =
+		let (index, s) = receive (select Index s) in
+		let (state, s) = receive (select State s) in
+		let c = (select Next s) in
+		let (next, s) = serverReceiveWorld[dualof TileChannel; a] c tail in
+        (Tile index state next, select Exit s)
+
 
 split : forall a:SL => ServerChannel; a -> Int -> Int -> Int -> World -> World
 split s1 size rowSize numLines world =
