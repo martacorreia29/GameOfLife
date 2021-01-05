@@ -20,9 +20,6 @@ type WorldChannel : SL =
 type GameChannel : SL =
 	+{ World : !Int; !Int; !Int; WorldChannel}
 
-type ServerChannel : SL =
-	+{ World : !Int; !Int; !Int; WorldChannel }
-
 -- CLIENT --------------------------------------------------------------------
 
 client : forall a:SL => GameChannel; a -> Int -> Int -> Int -> World -> a
@@ -101,33 +98,46 @@ subserver s =
    }
 
 -- SERVER FUNCTIONS --------------------------------------------------------------------
-splitWork : Int -> Int -> Int -> World -> World
-splitWork iterations size rowSize world =
-	if iterations == 0
+anotherWorld : Int -> Int -> Int -> World -> World
+anotherWorld iterations size rowSize world =
+	if iterations == 1
 	then world
 	else
-		let (s1, s2) = new ServerChannel in
-		fork(sink(subserver s2 world world rowSize));
-		split s1 size rowSize 3 world
+		let newGen = splitWork size rowSize world Nil in
+		iterate (iterations-1) size rowSize newGen
 
-	--let newWorld = generate[Skip] world world rowSize in
-	--let _ = printWorld[Skip] newWorld 10 in
-	--let _ = printUnitLn (); printUnitLn () in
+-- nextTile: the last after split
+--
+splitWork : Int -> Int -> Int -> World -> ChannelList -> World
+splitWork size rowSize world channelList =
+	case world of {
+		Nil -> receiveWork channelList Nil,
+		Tile index state next ->
+				let (splitedWorld, nextTile) = split world rowSize in
+				let (s1, s2) = new GameChannel in
+				let _ = fork(sink(subserver s1 splitedWorld rowSize)) in
+				let channelList = (C s2 channelList) in
+				splitWork size rowSize world channelList
+	}
+
+receiveWork : ChannelList -> World -> World
+receiveWork channelList world =
+	case channelList of {
+		Nil ->
+		 	world
+		C c next ->
+		  let (worldPart, _ )= receive c in
+			Tile
+	}
+
+data ChannelList = Nil | C GameChannel ChannelList
 
 split : forall a:SL => ServerChannel; a -> Int -> Int -> Int -> World -> World
 split s1 size rowSize numLines world =
 		case world of {
-			Nil ->
-				select Nil c,
+			Nil ->,
 			Tile index state next ->
-				clientTile[a] (select Tile c) index state next
-			}
-			
-			if numLines == 0
-			then
-			let (s1, s2) = new ServerChannel in
-			fork(sink(subserver s2 world world rowSize));
-			split s1 size rowSize 3 world
+		}
 
 generate : forall a:SL => World -> World -> Int -> World
 generate world current rowSize =
