@@ -1,9 +1,13 @@
-world : World
-world = Tile 0 True ((Tile 1 True (Tile 2 False (Tile 3 False Nil))))
 
+
+-- Represents a linked list of bools
 data World = Nil | Tile Int Bool World
+
+-- Represents a linked list of channels
 data ChannelList = Nul | C (dualof ServerChannel) ChannelList
 
+
+-- Channel used to transfer objects inside of World
 type TileChannel : SL =
 	&{ Index : !Int; TileChannel,
        State : !Bool; TileChannel,
@@ -11,14 +15,17 @@ type TileChannel : SL =
 	   Exit  : Skip
 	}
 
+-- Channel used to transfer World
 type WorldChannel : SL =
 	+{ Tile: TileChannel,
        Nil : Skip
   	}
 
+-- Channel used to pass key values and a world
 type GameChannel : SL =
 	+{ World : !Int; !Int; !Int; WorldChannel}
 
+-- TBD
 type ServerChannel : SL =
 	+{ World : WorldChannel}
 
@@ -100,6 +107,8 @@ subserver s =
    }
 
 -- SERVER FUNCTIONS --------------------------------------------------------------------
+
+-- Parallelism -------------------------------------------------------------------------
 anotherWorld : Int -> Int -> Int -> World -> World
 anotherWorld iterations size rowSize world =
 	if iterations == 1
@@ -164,6 +173,8 @@ split s1 size rowSize numLines world =
 			Nil ->,
 			Tile index state next ->
 		}
+
+-- GOF FUNCTIONS --------------------------------------------------------------------
 
 generate : forall a:SL => World -> World -> Int -> World
 generate world current rowSize =
