@@ -71,108 +71,106 @@ server s =
       		let (iterations, s) = receive s in
       		let (size, s) = receive s in
       		let (rowSize, s) = receive s in
-      		let (world, s) = serverWorld[a] s size rowSize in
+      		let (world, s) = serverWorld[a] s in
       		let world = splitWork iterations size rowSize world in
       		s
    }
 
-serverWorld : forall a:SL => dualof WorldChannel; a -> Int -> Int -> (World, a)
-serverWorld s size rowSize =
+serverWorld : forall a:SL => dualof WorldChannel; a -> (World, a)
+serverWorld s =
 	match s	with {
       Nil s ->
       	(Nil, s),
       Tile s ->
-      	let (world, s) = serverTile[a] s size rowSize in
+      	let (world, s) = serverTile[a] s in
       	(world, s)
     }
 
-serverTile : forall a:SL => dualof TileChannel; a -> Int -> Int -> (World, a)
-serverTile s size rowSize =
+serverTile : forall a:SL => dualof TileChannel; a -> (World, a)
+serverTile s =
 		let (index, s) = receive (select Index s) in
 		let (state, s) = receive (select State s) in
 		let c = (select Next s) in
-		let (next, s) = serverWorld[dualof TileChannel; a] c size rowSize in
+		let (next, s) = serverWorld[dualof TileChannel; a] c in
         (Tile index state next, select Exit s)
-
-subserver : forall a:SL => dualof ServerChannel; a -> World
-subserver s =
-	match s with {
-        World s ->
-      		let (iterations, s) = receive s in
-      		let (size, s) = receive s in
-      		let (rowSize, s) = receive s in
-      		let (world, s) = serverWorld[a] s size rowSize in
-      		let world = splitWork iterations size rowSize world in
-      		s
-   }
 
 -- SERVER FUNCTIONS --------------------------------------------------------------------
 
 -- Parallelism -------------------------------------------------------------------------
+
+-- iterations
 anotherWorld : Int -> Int -> Int -> World -> World
 anotherWorld iterations size rowSize world =
 	if iterations == 1
 	then world
 	else
-		let newGen = splitWork size rowSize world Nul in
-		iterate (iterations-1) size rowSize newGen
+	  let(w, r) = new WorldChannel in
+		let newGen = splitWork r world size size rowSize in --TODO
+		anotherWorld (iterations-1) size rowSize newGen
 
--- nextTile: the last after split
-splitWork : Int -> Int -> Int -> World -> ChannelList -> World
-splitWork size rowSize world channelList =
-	case world of {
-		Nil -> receiveWork channelList Nil,
-		Tile index state next ->
-				let (splitedWorld, nextTile) = split world rowSize in
-				let (s1, s2) = new ServerChannel in
-				let _ = fork(sink(subserver s1 splitedWorld rowSize)) in
-				let channelList = (C s2 channelList) in
-				splitWork size rowSize world channelList
-	}
+-- [  top ]
+-- [middle]
+-- [bottom]
+splitWork : dualof WorldChannel -> World -> Int -> Int -> Int -> dualof WorldChannel
+splitWork topRead world index size rowSize =
+	if index == size
+	then
+		-- TOP ROW
+		let (row, tail) = splitRow world rowSize in
+		let (write2, read2) = new WorldChannel in
+		let bottomRead = splitWork read2 tail in
+		let _ = fork(subserverTop row bottomRead write2) in
+		read2 -- to ignore
+	else if index == 0
+		then
+			-- BOTTOM ROW
+			let (row, tail) = splitRow world rowSize in
+	    let (write, read) = new WorldChannel in
+	    let _ = fork(subserverBotton row topRead write) in
+	    read
+		else
+			-- MIDDLE ROWS
+	    let (row, tail) = splitRow world rowSize in
+	    let (write, read) = new WorldChannel in
+	    let (write2, read2) = new WorldChannel in
+	    let bottomRead = splitWork read2 tail in
+	    let _ = fork(subserver row topRead bottomRead write write2) in
+	    read
 
-receiveWork : ChannelList -> World -> World
-receiveWork channelList world =
-	case channelList of {
-		Nul ->
-		 	world,
-		C c next ->
-		  let world = serverReceive c world in
-			receiveWork c world
-	}
-
-serverReceive : forall a:SL => dualof ServerChannel; a -> World -> World
-serverReceive s tail =
-		match s with {
-					World s ->
-						let (world, s) = serverReceiveWorld[a] s tail in
-						world
-		 }
-
-serverReceiveWorld : forall a:SL => dualof WorldChannel; a -> World -> (World, a)
-serverReceiveWorld s tail =
-	match s	with {
-      Nil s ->
-      	(tail, s),
-      Tile s ->
-      	let (world, s) = serverReceiveTile[a] s tail in
-      	(world, s)
-    }
-
-serverReceiveTile : forall a:SL => dualof TileChannel; a -> (World, a)
-serverReceiveTile s tail =
-		let (index, s) = receive (select Index s) in
-		let (state, s) = receive (select State s) in
-		let c = (select Next s) in
-		let (next, s) = serverReceiveWorld[dualof TileChannel; a] c tail in
-        (Tile index state next, select Exit s)
-
-
-split : forall a:SL => ServerChannel; a -> Int -> Int -> Int -> World -> World
-split s1 size rowSize numLines world =
+splitRow : World -> Int -> (World, World)
+splitRow world rowSize =
 		case world of {
-			Nil ->,
+			Nil -> (Nil, Nil),
 			Tile index state next ->
+				if rowSize == 1
+				then
+				 	( Tile index state Nil, Tile index state next)
+				else
+					let (row, tail) = splitRow next (rowSize-1) in
+					( Tile index state row, tail)
 		}
+
+subserverTop : World -> dualof WorldChannel -> WorldChannel -> World
+subserverTop row bottomRead write =
+		let _ = clientWorld[Skip] write row in
+		let (rowBottom, write) = serverWorld[Skip] bottomRead in
+		generateTop row rowBottom
+
+subserver : World -> dualof WorldChannel -> dualof WorldChannel -> WorldChannel -> WorldChannel -> World
+subserver row topRead bottomRead write write2 =
+		let _ = clientWorld[Skip] write row in
+		let _ = clientWorld[Skip] write2 row in
+		let (rowTop, write) = serverWorld[Skip] topRead in
+		let (rowBottom, write) = serverWorld[Skip] bottomRead in
+		generate rowTop row rowBottom
+
+subserverBottom : World -> dualof WorldChannel -> WorldChannel -> World
+subserverBottom row topRead write =
+		let _ = clientWorld[Skip] write row in
+		let (rowTop, write) = serverWorld[Skip] topRead in
+		generateBottom rowTop row
+
+-- TODO GENERATES
 
 -- GOF FUNCTIONS --------------------------------------------------------------------
 
