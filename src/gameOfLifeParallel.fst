@@ -172,6 +172,80 @@ subserverBottom row topRead write =
 
 -- TODO GENERATES
 
+------------------------------------------------------------------------------------------------------------
+-- NEW CODE TO SHOW MARTA ----------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------
+
+-- A simple linked int list, used to store the number of neighbors around a tile
+data IntList = Nul | Number Int IntList
+
+-- Will calculete the next generation states of the Tiles in the "row" given
+-- returns the next game of life middle row
+generateMiddle : World -> World -> World -> World
+generateMiddle rowTop row rowBottom =
+		let numNeighborsList = countNeighbors in
+		gameOfLife row numNeighborsList
+
+-- Given a List of World tiles and a list of number of neighbors, both with the same size
+-- Will calculete the next state of a tile acording to the same index number of neighbors
+-- from the "numNeighborsList"
+gameOfLife : World -> IntList -> World
+gameOfLife row numNeighborsList =
+		case row of{
+			Nil -> Nil
+			Tile index state next ->
+					case numNeighborsList of{
+						Nul -> Nil
+						Number numNeighbors xs ->
+								let newState = applyGoFRules numberOfNeighbors state in
+								let newNext = gameOfLive next xs in
+								Tile index newState newNext
+					}
+		}
+
+-- TODO
+-- [l][i][r]
+-- For each tile in the row, it will count if l i and r are alive and place that number in i
+-- returns a list of all the alive tiles for each (l, i, r) group
+countRowNeighbors : World -> IntList
+countRowNeighbors
+
+-- TODO
+-- [l][i][r]
+-- For each tile in the row, it will count if l and r are alive and place that number in i,
+-- does not care about if i is alive or not.
+-- returns a list of all the alive tiles for each (l, i, r) group
+countRowNeighborsWithoutSelf : World -> IntList
+countRowNeighbors
+
+-- Takes 3 list of World tiles of size n and will create a Intlist of the same size with
+-- the number of neighbors of each tile
+countNeighbors : World -> World -> World -> IntList
+countNeighbors rowTop row rowBottom =
+			let numNeighborsTopList = countRowNeighbors in
+			let numNeighborsMainList = countRowNeighborsWithoutSelf in
+			let numNeighborsBottomList = countRowNeighbors in
+			zipSum numNeighborsTopList numNeighborsMainList numNeighborsBottomList
+
+-- TODO
+-- Takes 3 IntList zips them into 1 IntList, by suming all the same index values
+zipSum : IntList -> IntList -> IntList -> IntList
+zipSum
+
+
+-- Applies the Game of life rules given a number of neighbors and current state
+-- returs the next correct state
+applyGoFRules : Int -> Bool -> Bool
+applyGoFRules numNeighbors alive =
+			if alive && numNeighbors < 2 then False            -- underpopulation
+			else if alive && numNeighbors > 3 then False       -- overpopulation
+			else if (not alive) && numNeighbors == 3 then True -- reproduction
+			else alive                                         -- live on
+
+------------------------------------------------------------------------------------------------------------
+-- NEW CODE TO SHOW MARTA END ------------------------------------------------------------------------------
+------------------------------------------------------------------------------------------------------------
+
 -- GOF FUNCTIONS --------------------------------------------------------------------
 
 generate : forall a:SL => World -> World -> Int -> World
