@@ -100,6 +100,7 @@ generations iterations size rowSize world =
 	then world
 	else
 	  let (w, r) = new WorldChannel in
+		let _ = select Nil w in -- TO USE LINEAR VAR
 		let read = splitWork r world size size rowSize in
 		let (newGen, _) = serverWorld[Skip] read in
 		generations (iterations-1) size rowSize newGen
@@ -112,6 +113,7 @@ splitWork topRead world index size rowSize =
 	if index == size
 	then
 		-- TOP ROW
+		let (_, _) = serverWorld[Skip] topRead in -- TO USE LINEAR VAR
 		let (row, tail) = splitRow world rowSize in
 		let (write, read) = new WorldChannel in
 		let (write2, read2) = new WorldChannel in
@@ -282,7 +284,7 @@ zipSumEdge middle other =
 				Nul -> Nul,
 				Number middleNumNeighbors middleNext ->
 					let sum = otherNumNeighbors + middleNumNeighbors in
-					Number sum (zipSum middleNext otherNext)
+					Number sum (zipSumEdge middleNext otherNext)
 			}
 	}
 
