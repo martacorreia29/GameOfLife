@@ -96,19 +96,20 @@ serverTile s =
 -- iterations
 generations : Int -> Int -> Int -> World -> World
 generations iterations size rowSize world =
-	if iterations == 1
+	if iterations == 0
 	then world
 	else
 	  let (w, r) = new WorldChannel in
 		let _ = select Nil w in -- TO USE LINEAR VAR
-		let read = splitWork r world size size rowSize in
-		let (newGen, _) = serverWorld[Skip] read in
+		let (read, read2) = splitWork r world (size/rowSize) (size/rowSize) rowSize in
+		let (_,_) = serverWorld[Skip] read in
+		let (newGen, _) = serverWorld[Skip] read2 in
 		generations (iterations-1) size rowSize newGen
 
 -- [  top ]
 -- [middle]
 -- [bottom]
-splitWork : dualof WorldChannel -> World -> Int -> Int -> Int -> dualof WorldChannel
+splitWork : dualof WorldChannel -> World -> Int -> Int -> Int -> (dualof WorldChannel, dualof WorldChannel)
 splitWork topRead world index size rowSize =
 	if index == size
 	then
@@ -117,25 +118,28 @@ splitWork topRead world index size rowSize =
 		let (row, tail) = splitRow world rowSize in
 		let (write, read) = new WorldChannel in
 		let (write2, read2) = new WorldChannel in
-		let bottomRead = splitWork read2 tail (index - 1) size rowSize in
-		let _ = fork(subserverTop row bottomRead write write2) in
-		read
+		let (write3, read3) = new WorldChannel in
+		let (bottomRead, bottomRead2) = splitWork read2 tail (index - 1) size rowSize in
+		let _ = subserverTop row bottomRead bottomRead2 write write2 write3 in
+		(read, read3)
 	else
-		if index == 0
+		if index == 1
 		then
 			-- BOTTOM ROW
-			let (row, tail) = splitRow world rowSize in
+		let (row, tail) = splitRow world rowSize in
 	    let (write, read) = new WorldChannel in
-	    let _ = fork(subserverBottom row topRead write) in
-	    read
+		let (write2, read2) = new WorldChannel in
+	    let _ = fork(subserverBottom row topRead write write2) in
+	    (read, read2)
 		else
 			-- MIDDLE ROWS
 	    let (row, tail) = splitRow world rowSize in
 	    let (write, read) = new WorldChannel in
 	    let (write2, read2) = new WorldChannel in
-	    let bottomRead = splitWork read2 tail (index - 1) size rowSize in
-	    let _ = fork(subserver row topRead bottomRead write write2) in
-	    read
+		let (write3, read3) = new WorldChannel in
+	    let (bottomRead, bottomRead2) = splitWork read2 tail (index - 1) size rowSize in
+	    let _ = fork(subserver row topRead bottomRead bottomRead2 write write2 write3) in
+	    (read, read3)
 
 --
 splitRow : World -> Int -> (World, World)
@@ -151,33 +155,33 @@ splitRow world rowSize =
 					( Tile index state row, tail)
 		}
 
---
-subserverTop : World -> dualof WorldChannel -> WorldChannel -> WorldChannel -> ()
-subserverTop row bottomRead write write2 =
+subserverTop : World -> dualof WorldChannel -> dualof WorldChannel -> WorldChannel -> WorldChannel -> WorldChannel -> ()
+subserverTop row bottomRead bottomRead2 write write2 write3 =
+		let _ = select Nil write in
 		let _ = clientWorld[Skip] write2 row in
 		let (rowBottom, _) = serverWorld[Skip] bottomRead in
 		let world = generateEdge row rowBottom in
-		let (bottomWorld, _) = serverWorld[Skip] bottomRead in
-		let _ = clientWorld[Skip] write (concat world bottomWorld) in
+		let (bottomWorld, _) = serverWorld[Skip] bottomRead2 in
+		let _ = fork(sink(clientWorld[Skip] write3 (concat world bottomWorld))) in
 		()
 
-subserver : World -> dualof WorldChannel -> dualof WorldChannel -> WorldChannel -> WorldChannel -> ()
-subserver row topRead bottomRead write write2 =
-		let _ = clientWorld[Skip] write row in
-		let _ = clientWorld[Skip] write2 row in
+subserver : World -> dualof WorldChannel -> dualof WorldChannel -> dualof WorldChannel  -> WorldChannel -> WorldChannel -> WorldChannel -> ()
+subserver row topRead bottomRead bottomRead2 write write2 write3 =
 		let (rowTop, _) = serverWorld[Skip] topRead in
+		let _ = clientWorld[Skip] write2 row in
 		let (rowBottom, bottomRead) = serverWorld[Skip] bottomRead in
+		let _ = clientWorld[Skip] write row in
 		let world = generateMiddle rowTop row rowBottom in
-		let (bottomWorld, _) = serverWorld[Skip] bottomRead in
-		let _ = clientWorld[Skip] write (concat world bottomWorld) in
+		let (bottomWorld, _) = serverWorld[Skip] bottomRead2 in
+		let _ = clientWorld[Skip] write3 (concat world bottomWorld) in
 		()
 
-subserverBottom : World -> dualof WorldChannel -> WorldChannel -> ()
-subserverBottom row topRead write =
+subserverBottom : World -> dualof WorldChannel -> WorldChannel -> WorldChannel -> ()
+subserverBottom row topRead write write2 =
+		let (rowTop, _) = serverWorld[Skip] topRead in
 		let _ = clientWorld[Skip] write row in
-		let (rowTop, write) = serverWorld[Skip] topRead in
 		let world = generateEdge rowTop row in
-		let _ = clientWorld[Skip] write world in
+		let _ = clientWorld[Skip] write2 world in
 		()
 
 concat : World -> World -> World
@@ -318,7 +322,7 @@ applyGoLRules numNeighbors alive =
 main : ()
 main =
   let (c, s) = new GameChannel in
-  fork (sink (client[Skip] c 10 99 10 (initWorld 99)));
+  fork (sink (client[Skip] c 1 100 10 (initWorld 100)));
   sink(server[Skip] s)
 
 initWorld : Int -> World
@@ -329,21 +333,32 @@ initWorld n = if n == 0
 semiRandomBool : Int -> Bool
 semiRandomBool n = n == 45 || n == 46 || n == 47 || n == 56 || n == 36
 
--- Prints the world with chars
-printWorld : forall a:SL => World -> Int -> ()
+printWorld : World -> Int -> ()
 printWorld world rowSize =
  case world of {
     Nil ->
-       printChar '_',
+       printString "Nil",
     Tile i b l ->
        let _ = if b
                then printChar '#'
                else printChar '_' in
        let iMod = mod i rowSize in
-       let _ = if iMod == 0 && i > 1
+       let _ = if iMod == 0
                then printUnitLn ()
                else ()
-       in printWorld[a] l rowSize
+       in printWorld l rowSize
+    }
+
+printRow : World -> ()
+printRow world =
+ case world of {
+    Nil ->
+       printStringLn "()",
+    Tile i b l ->
+       let _ = if b
+               then printChar '#'
+               else printChar '_' in
+       printRow l
     }
 
 sink : Skip -> ()
