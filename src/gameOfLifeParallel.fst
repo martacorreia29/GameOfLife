@@ -22,9 +22,19 @@ type WorldChannel : SL =
 type GameChannel : SL =
 	+{ World : !Int; !Int; !Int; WorldChannel}
 
--- TBD
-type ServerChannel : SL =
-	+{ World : WorldChannel}
+------------------------
+type NumberChannel : SL =
+	&{ Num : !Int; NumberChannel,
+	   Next : +{ Number: NumberChannel,
+	     Nul : Skip
+		}; NumberChannel,
+	   Exit : Skip
+	}
+
+type IntListChannel : SL =
+	+{ Number: NumberChannel,
+	     Nul : Skip
+		}
 
 -- CLIENT --------------------------------------------------------------------
 client : forall a:SL => GameChannel; a -> Int -> Int -> Int -> World -> a
@@ -59,6 +69,27 @@ clientTile c index state next =
       	c
     }
 
+clientList : forall a:SL => IntListChannel; a -> IntList -> a
+clientList c numNeighbors =
+	case numNeighbors of {
+      Nul ->
+      	select Nul c,
+      Number num next ->
+				clientNumber[a] (select Number c) num next
+      }
+
+clientNumber : forall a:SL => NumberChannel; a -> Int -> IntList -> a
+clientNumber c num next =
+	match c with {
+      Num c ->
+      	clientNumber[a] (send num c) num next,
+      Next c ->
+      	let c = clientList[NumberChannel;a] c next in
+      	clientNumber[a] c num next,
+		  Exit c ->
+		    	c
+    }
+
 -- SERVER ------------------------------------------------------------------------------
 server : forall a:SL => dualof GameChannel; a -> a
 server s =
@@ -90,53 +121,72 @@ serverTile s =
 		let (next, s) = serverWorld[dualof TileChannel; a] c in
         (Tile index state next, select Exit s)
 
+serverList : forall a:SL => dualof IntListChannel; a -> (IntList, a)
+serverList s =
+	match s	with {
+      Nul s ->
+      	(Nul, s),
+      Number s ->
+      	let (list, s) = serverNumber[a] s in
+      	(list, s)
+    }
+
+serverNumber : forall a:SL => dualof NumberChannel; a -> (IntList, a)
+serverNumber s =
+		let (num, s) = receive (select Num s) in
+		let c = (select Next s) in
+		let (next, s) = serverList[dualof NumberChannel; a] c in
+        (Number num next, select Exit s)
+
 -- SERVER FUNCTIONS --------------------------------------------------------------------
 -- Parallelism -------------------------------------------------------------------------
-
 -- iterations
 generations : Int -> Int -> Int -> World -> World
 generations iterations size rowSize world =
 	if iterations == 0
 	then world
 	else
-	  let (w, r) = new WorldChannel in
-		let _ = select Nil w in -- TO USE LINEAR VAR
+	  let (w, r) = new IntListChannel in
+		let _ = select Nul w in -- TO USE LINEAR VAR
 		let (read, read2) = splitWork r world (size/rowSize) (size/rowSize) rowSize in
-		let (_,_) = serverWorld[Skip] read in
+		let (_,_) = serverList[Skip] read in
 		let (newGen, _) = serverWorld[Skip] read2 in
+		printStringLn " ";
+		printWorld newGen 50 50;
+		printStringLn " ";
 		generations (iterations-1) size rowSize newGen
 
 -- [  top ]
 -- [middle]
 -- [bottom]
-splitWork : dualof WorldChannel -> World -> Int -> Int -> Int -> (dualof WorldChannel, dualof WorldChannel)
+splitWork : dualof IntListChannel -> World -> Int -> Int -> Int -> (dualof IntListChannel, dualof WorldChannel)
 splitWork topRead world index size rowSize =
 	if index == size
 	then
 		-- TOP ROW
-		let (_, _) = serverWorld[Skip] topRead in -- TO USE LINEAR VAR
+		let (_, _) = serverList[Skip] topRead in -- TO USE LINEAR VAR
 		let (row, tail) = splitRow world rowSize in
-		let (write, read) = new WorldChannel in
-		let (write2, read2) = new WorldChannel in
+		let (write, read) = new IntListChannel in
+		let (write2, read2) = new IntListChannel in
 		let (write3, read3) = new WorldChannel in
 		let (bottomRead, bottomRead2) = splitWork read2 tail (index - 1) size rowSize in
 		let _ = subserverTop row bottomRead bottomRead2 write write2 write3 in
 		(read, read3)
 	else
+	-- BOTTOM ROW
 		if index == 1
 		then
-			-- BOTTOM ROW
-		let (row, tail) = splitRow world rowSize in
-	    let (write, read) = new WorldChannel in
-		let (write2, read2) = new WorldChannel in
+			let (row, tail) = splitRow world rowSize in
+	    let (write, read) = new IntListChannel in
+			let (write2, read2) = new WorldChannel in
 	    let _ = fork(subserverBottom row topRead write write2) in
 	    (read, read2)
 		else
 			-- MIDDLE ROWS
 	    let (row, tail) = splitRow world rowSize in
-	    let (write, read) = new WorldChannel in
-	    let (write2, read2) = new WorldChannel in
-		let (write3, read3) = new WorldChannel in
+	    let (write, read) = new IntListChannel in
+	    let (write2, read2) = new IntListChannel in
+			let (write3, read3) = new WorldChannel in
 	    let (bottomRead, bottomRead2) = splitWork read2 tail (index - 1) size rowSize in
 	    let _ = fork(subserver row topRead bottomRead bottomRead2 write write2 write3) in
 	    (read, read3)
@@ -149,40 +199,47 @@ splitRow world rowSize =
 			Tile index state next ->
 				if rowSize == 1
 				then
-				 	( Tile index state Nil, Tile index state next)
+				 	( Tile index state Nil, next)
 				else
 					let (row, tail) = splitRow next (rowSize-1) in
 					( Tile index state row, tail)
 		}
 
-subserverTop : World -> dualof WorldChannel -> dualof WorldChannel -> WorldChannel -> WorldChannel -> WorldChannel -> ()
+subserverTop : World -> dualof IntListChannel -> dualof WorldChannel -> IntListChannel -> IntListChannel -> WorldChannel -> ()
 subserverTop row bottomRead bottomRead2 write write2 write3 =
-		let _ = select Nil write in
-		let _ = clientWorld[Skip] write2 row in
-		let (rowBottom, _) = serverWorld[Skip] bottomRead in
-		let world = generateEdge row rowBottom in
+		let _ = select Nul write in
+		let numNeighbors = countRowNeighbors Nil row False in
+		let numNeighborsWithSelf = countRowNeighbors Nil row True in
+		let _ = clientList[Skip] write2 numNeighborsWithSelf in
+		let (rowBottom, _) = serverList[Skip] bottomRead in
+		let world = generateEdge numNeighbors rowBottom row in
 		let (bottomWorld, _) = serverWorld[Skip] bottomRead2 in
 		let _ = fork(sink(clientWorld[Skip] write3 (concat world bottomWorld))) in
 		()
 
-subserver : World -> dualof WorldChannel -> dualof WorldChannel -> dualof WorldChannel  -> WorldChannel -> WorldChannel -> WorldChannel -> ()
+subserver : World -> dualof IntListChannel -> dualof IntListChannel -> dualof WorldChannel  -> IntListChannel -> IntListChannel -> WorldChannel -> ()
 subserver row topRead bottomRead bottomRead2 write write2 write3 =
-		let (rowTop, _) = serverWorld[Skip] topRead in
-		let _ = clientWorld[Skip] write2 row in
-		let (rowBottom, bottomRead) = serverWorld[Skip] bottomRead in
-		let _ = clientWorld[Skip] write row in
-		let world = generateMiddle rowTop row rowBottom in
+		let numNeighbors = countRowNeighbors Nil row False in
+		let numNeighborsWithSelf = countRowNeighbors Nil row True in
+		let (rowTop, _) = serverList[Skip] topRead in
+		let _ = clientList[Skip] write2 numNeighborsWithSelf in
+		let (rowBottom, _) = serverList[Skip] bottomRead in
+		let _ = clientList[Skip] write numNeighborsWithSelf in
+		let world = generateMiddle rowTop numNeighbors rowBottom row in
 		let (bottomWorld, _) = serverWorld[Skip] bottomRead2 in
 		let _ = clientWorld[Skip] write3 (concat world bottomWorld) in
 		()
 
-subserverBottom : World -> dualof WorldChannel -> WorldChannel -> WorldChannel -> ()
+subserverBottom : World -> dualof IntListChannel -> IntListChannel -> WorldChannel -> ()
 subserverBottom row topRead write write2 =
-		let (rowTop, _) = serverWorld[Skip] topRead in
-		let _ = clientWorld[Skip] write row in
-		let world = generateEdge rowTop row in
+		let numNeighbors = countRowNeighbors Nil row False in
+		let numNeighborsWithSelf = countRowNeighbors Nil row True in
+		let (rowTop, _) = serverList[Skip] topRead in
+		let _ = clientList[Skip] write numNeighborsWithSelf in
+		let world = generateEdge rowTop numNeighbors row in
 		let _ = clientWorld[Skip] write2 world in
 		()
+
 
 concat : World -> World -> World
 concat xs ys =
@@ -191,24 +248,28 @@ concat xs ys =
     Tile i s xs' -> Tile i s (concat xs' ys)
   }
 
-generateEdge : World -> World -> World
-generateEdge row otherRow =
-		let numNeighborsMainList = countRowNeighbors Nil row False in
-		let numNeighborsOtherList = countRowNeighbors Nil otherRow True in
-		let numNeighborsList = zipSumEdge numNeighborsMainList numNeighborsOtherList in
+generateEdge : IntList -> IntList -> World -> World
+generateEdge numNeighbors otherRow row =
+		let numNeighborsList = zipSumEdge numNeighbors otherRow in
 		gameOfLife row numNeighborsList
 
 -- Will calculate the next generation states of the Tiles in the "row" given
 -- returns the next game of life middle row
 -- Takes 3 list of World tiles of size n and will create a Intlist of the same size with
 -- the number of neighbors of each tile
-generateMiddle : World -> World -> World -> World
-generateMiddle rowTop row rowBottom =
-		let numNeighborsTopList = countRowNeighbors Nil rowTop True in
-		let numNeighborsMainList = countRowNeighbors Nil row False in
-		let numNeighborsBottomList = countRowNeighbors Nil rowBottom True in
-		let numNeighborsList = zipSum numNeighborsTopList numNeighborsMainList numNeighborsBottomList in
+generateMiddle : IntList -> IntList -> IntList -> World -> World
+generateMiddle rowTop numNeighbors rowBottom row =
+		let numNeighborsList = zipSum rowTop numNeighbors rowBottom in
 		gameOfLife row numNeighborsList
+
+printList : IntList -> ()
+printList numNeightbours =
+	case numNeightbours of {
+      Nul -> printString "()",
+      Number num next ->
+        printInt num;
+        printList next
+	}
 
 -- [l][i][r]
 -- For each tile in the row, it will count if l i and r are alive and place that number in i
@@ -216,11 +277,11 @@ generateMiddle rowTop row rowBottom =
 countRowNeighbors : World -> World -> Bool -> IntList
 countRowNeighbors left current countSelf =
 		case left of {
-			Nil ->
+			Nil -> -- FIRST COLUMN
 				case current of {
 					Nil -> Nul,
-					Tile currentIndex currentState currentNext ->
-						case currentNext of {
+					Tile currentIndex currentState right ->
+						case right of {
 							Nil ->
 								if currentState && countSelf
 								then Number 1 Nul
@@ -229,33 +290,51 @@ countRowNeighbors left current countSelf =
 								if rightState
 								then
 										if currentState && countSelf
-										then Number 2 $ countRowNeighbors current currentNext countSelf
-										else Number 1 $ countRowNeighbors current currentNext countSelf
-								else Number 0 $ countRowNeighbors current currentNext countSelf
+										then Number 2 $ countRowNeighbors current right countSelf
+										else Number 1 $ countRowNeighbors current right countSelf
+								else
+										if currentState && countSelf
+										then Number 1 $ countRowNeighbors current right countSelf
+										else Number 0 $ countRowNeighbors current right countSelf
 						}
 				},
 			Tile leftIndex leftState leftNext ->
 				case current of {
 					Nil -> Nul, -- when left is the last element
-					Tile currentIndex currentState currentNext ->
-						case currentNext of {
+					Tile currentIndex currentState right ->
+						case right of {
 							Nil ->
 								if leftState
 								then
 									if currentState && countSelf
 									then Number 2 Nul
 									else Number 1 Nul
-								else Number 0 Nul,
+								else
+									if currentState && countSelf
+									then Number 1 $ Nul
+									else Number 0 $ Nul,
 							Tile rightIndex rightState rightNext ->
 							if leftState
 							then
 								if rightState
 								then
 									if currentState && countSelf
-									then Number 3 $ countRowNeighbors current currentNext countSelf
-									else Number 2 $ countRowNeighbors current currentNext countSelf
-								else Number 1 $ countRowNeighbors current currentNext countSelf
-							else Number 0 $ countRowNeighbors current currentNext countSelf
+									then Number 3 $ countRowNeighbors current right countSelf
+									else Number 2 $ countRowNeighbors current right countSelf
+								else
+									if currentState && countSelf
+									then Number 2 $ countRowNeighbors current right countSelf
+									else Number 1 $ countRowNeighbors current right countSelf
+							else
+								if rightState
+								then
+									if currentState && countSelf
+									then Number 2 $ countRowNeighbors current right countSelf
+									else Number 1 $ countRowNeighbors current right countSelf
+								else
+									if currentState && countSelf
+									then Number 1 $ countRowNeighbors current right countSelf
+									else Number 0 $ countRowNeighbors current right countSelf
 						}
 				}
 		}
@@ -273,7 +352,7 @@ zipSum top middle bottom =
 						Nul -> Nul,
 						Number bottomNumNeighbors bottomNext ->
 							let sum = topNumNeighbors + middleNumNeighbors + bottomNumNeighbors in
-							Number sum (zipSum topNext middleNext bottomNext)
+              Number sum (zipSum topNext middleNext bottomNext)
 					}
 			}
 	}
@@ -319,34 +398,40 @@ applyGoLRules numNeighbors alive =
 			else alive                                         -- live on
 
 -- MAIN --------------------------------------------------------------------------------
-main : ()
+main : String
 main =
   let (c, s) = new GameChannel in
-  fork (sink (client[Skip] c 1 100 10 (initWorld 100)));
-  sink(server[Skip] s)
+  let world = initWorld 1000 in
+  printWorld world 50 50;
+  printStringLn " ";
+	printStringLn " ";
+  fork (sink (client[Skip] c 1000 1000 50 (world)));
+  sink(server[Skip] s);
+  " "
 
 initWorld : Int -> World
 initWorld n = if n == 0
               then Nil
-              else Tile n (semiRandomBool n) (initWorld (n-1))
+              else Tile n (multiplesThree n) (initWorld (n-1))
 
-semiRandomBool : Int -> Bool
-semiRandomBool n = n == 45 || n == 46 || n == 47 || n == 56 || n == 36
+multiplesThree : Int -> Bool
+multiplesThree n = (mod n 3) == 0
 
-printWorld : World -> Int -> ()
-printWorld world rowSize =
+printWorld : World -> Int -> Int -> ()
+printWorld world rowSize i =
  case world of {
     Nil ->
-       printString "Nil",
-    Tile i b l ->
+       printString " ",
+    Tile _ b l ->
        let _ = if b
                then printChar '#'
                else printChar '_' in
-       let iMod = mod i rowSize in
-       let _ = if iMod == 0
-               then printUnitLn ()
-               else ()
-       in printWorld l rowSize
+       let i = if i == 1
+               then
+                 let _ = printUnitLn () in
+                 rowSize
+               else i-1
+       in printWorld l rowSize i
     }
 
 printRow : World -> ()
