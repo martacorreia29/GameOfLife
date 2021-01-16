@@ -1,183 +1,236 @@
-world : World
-world = Tile 0 True ((Tile 1 True (Tile 2 False (Tile 3 False Nil))))
-
+-- Represents a linked list of bools
 data World = Nil | Tile Int Bool World
 
-type Game = Int -> Int -> World
+-- A simple linked int list, used to store the number of neighbors around a tile
+data IntList = Nul | Number Int IntList
 
-type TileChannel : SL =
-	&{ Index : !Int; TileChannel,
-       State : !Bool; TileChannel,
-       Next  : WorldChannel; TileChannel,
-	   Exit  : Skip
-	}
-
-type WorldChannel : SL =
-	+{ Tile: TileChannel,
-       Nil : Skip
-  	}
-
-type GameChannel : SL =
-	+{ World : !Int; !Int; !Int; WorldChannel}
-
-client : forall a:SL => GameChannel; a -> Int -> Int -> Int -> World -> a
-client c iterations size rowSize world =
-	        let c = select World c in
-			let c = send iterations c in
-      		let c = send size c in
-      		let c = send rowSize c in
-       		let c = clientWorld[a] c world in
-      		c
-
-clientWorld : forall a:SL => WorldChannel; a -> World -> a
-clientWorld c world =
-	case world of {
-      Nil ->
-      	select Nil c,
-      Tile index state next ->
-      	clientTile[a] (select Tile c) index state next
-      }
-
-clientTile : forall a:SL => TileChannel; a -> Int -> Bool -> World -> a
-clientTile c index state next =
-	match c with {
-      Index c ->
-      	clientTile[a] (send index c) index state next,
-      State c ->
-        clientTile[a] (send state c) index state next,
-      Next c ->
-      	let c = clientWorld[TileChannel;a] c next in
-      	clientTile[a] c index state next,
-	  Exit c ->
-      	c
-    }
-
--- SERVER ------------------------------------------------------------------------------
-server : forall a:SL => dualof GameChannel; a -> a
-server s =
-	match s with {
-        World s ->
-      		let (iterations, s) = receive s in
-      		let (size, s) = receive s in
-      		let (rowSize, s) = receive s in
-      		let (world, s) = serverWorld[a] s size rowSize in
-      		let world = splitWork iterations size rowSize world in
-      		s
-   }
-
-serverWorld : forall a:SL => dualof WorldChannel; a -> Int -> Int -> (World, a)
-serverWorld s size rowSize =
-	match s	with {
-      Nil s ->
-      	(Nil, s),
-      Tile s ->
-      	let (world, s) = serverTile[a] s size rowSize in
-      	(world, s)
-    }
-
-serverTile : forall a:SL => dualof TileChannel; a -> Int -> Int -> (World, a)
-serverTile s size rowSize =
-		let (index, s) = receive (select Index s) in
-		let (state, s) = receive (select State s) in
-		let c = (select Next s) in
-		let (next, s) = serverWorld[dualof TileChannel; a] c size rowSize in
-        (Tile index state next, select Exit s)
-
--- SERVER FUNCTIONS --------------------------------------------------------------------
-splitWork : Int -> Int -> Int -> World -> World
-splitWork iterations size rowSize world =
+generations : Int -> Int -> Int -> World -> World
+generations iterations size rowSize world =
 	if iterations == 0
 	then world
 	else
-		let newWorld = generate[Skip] world world rowSize in
-		let _ = printWorld[Skip] newWorld 10 in
-		let _ = printUnitLn (); printUnitLn () in
-  	splitWork (iterations - 1) size rowSize newWorld
+		let (_ , newGen) = splitWork world Nul (size/rowSize) (size/rowSize) rowSize in
+		printStringLn " ";
+		printWorld newGen rowSize rowSize;
+		printStringLn " ";
+		generations (iterations-1) size rowSize newGen
 
-generate : forall a:SL => World -> World -> Int -> World
-generate world current rowSize =
-		case current of {
-    		Nil ->
-      			Nil,
-    		Tile x b l ->
-      			let numberOfNeighbors = countNeighbors world x rowSize in
-          		let newState =
-          			if b && numberOfNeighbors < 2 then False            -- underpopulation
-          			else if b && numberOfNeighbors > 3 then False       -- overpopulation
-          			else if (not b) && numberOfNeighbors == 3 then True -- reproduction
-                    else b in                                       -- Live on
-          		let newList = generate[a] world l rowSize in
-          		Tile x newState newList
-    	}
+-- [  top ]
+-- [middle]
+-- [bottom]
+splitWork : World -> IntList -> Int -> Int -> Int -> (IntList, World)
+splitWork world topRow index size rowSize =
+	if index == size
+	then
+		-- TOP ROW
+		let (row, tail) = splitRow world rowSize in
+		let numNeighbors = countRowNeighbors Nil row False in
+		let numNeighborsWithSelf = countRowNeighbors Nil row True in
+		let (bottomRow, bottomWorld) = splitWork tail numNeighborsWithSelf (index - 1) size rowSize in
+		let sumNeighbors = zipSumEdge numNeighbors bottomRow in
+		let newWorld = gameOfLife row sumNeighbors in
+		(numNeighborsWithSelf, concat newWorld bottomWorld)
+	else
+	-- BOTTOM ROW
+		if index == 1
+		then
+			let (row, tail) = splitRow world rowSize in
+			let numNeighbors = countRowNeighbors Nil row False in
+			let numNeighborsWithSelf = countRowNeighbors Nil row True in
+			let sumNeighbors = zipSumEdge topRow numNeighbors in
+			let newWorld = gameOfLife row sumNeighbors in
+	    (numNeighborsWithSelf, newWorld)
+		else
+			-- MIDDLE ROWS
+	    let (row, tail) = splitRow world rowSize in
+			let numNeighbors = countRowNeighbors Nil row False in
+			let numNeighborsWithSelf = countRowNeighbors Nil row True in
+			let (bottomRow, bottomWorld) = splitWork tail numNeighborsWithSelf (index - 1) size rowSize in
+	    let sumNeighbors = zipSum topRow numNeighbors bottomRow in
+			let newWorld = gameOfLife row sumNeighbors in
+			(numNeighborsWithSelf, concat newWorld bottomWorld)
 
--- Aux funtion to countNeighbors
--- finds the tile with index i and verifies if it is alive, if so returns 1 else 0
-getNeighborValue : forall a:SL => World -> Int -> Int
-getNeighborValue world i =
-	case world of {
-    Nil ->
-      0,
-    Tile x b l ->
-      if x == i && b
-      then 1
-      else getNeighborValue[a] l i
-    }
+splitRow : World -> Int -> (World, World)
+splitRow world rowSize =
+		case world of {
+			Nil -> (Nil, Nil),
+			Tile index state next ->
+				if rowSize == 1
+				then
+				 	( Tile index state Nil, next)
+				else
+					let (row, tail) = splitRow next (rowSize-1) in
+					( Tile index state row, tail)
+		}
 
--- Returns the number of Neighbors of i that are alive
--- [a][b][c]
--- [d][i][e]
--- [f][g][h]
-countNeighbors: World -> Int -> Int -> Int
-countNeighbors world i rowSize =
-            let d = i-1 in
-            let e = i+1 in
-            let b = i - rowSize in
-            let g = i + rowSize in
-            let a = b - 1 in
-            let c = b + 1 in
-            let f = g - 1 in
-            let h = g + 1 in
-            let count = getNeighborValue[Skip] world d +
-                        getNeighborValue[Skip] world e +
-                        getNeighborValue[Skip] world b +
-                        getNeighborValue[Skip] world g +
-                        getNeighborValue[Skip] world a  +
-                        getNeighborValue[Skip] world c  +
-                        getNeighborValue[Skip] world f  +
-                        getNeighborValue[Skip] world h  in
-            count
+concat : World -> World -> World
+concat xs ys =
+  case xs of {
+    Nil -> ys,
+    Tile i s xs' -> Tile i s (concat xs' ys)
+  }
 
--- MAIN --------------------------------------------------------------------------------
-main : ()
+-- [l][i][r]
+-- For each tile in the row, it will count if l i and r are alive and place that number in i
+-- returns a list of all the alive tiles for each (l, i, r) group
+countRowNeighbors : World -> World -> Bool -> IntList
+countRowNeighbors left current countSelf =
+		case left of {
+			Nil -> -- FIRST COLUMN
+				case current of {
+					Nil -> Nul,
+					Tile currentIndex currentState right ->
+						case right of {
+							Nil ->
+								if currentState && countSelf
+								then Number 1 Nul
+								else Number 0 Nul,
+							Tile rightIndex rightState rightNext ->
+								if rightState
+								then
+										if currentState && countSelf
+										then Number 2 $ countRowNeighbors current right countSelf
+										else Number 1 $ countRowNeighbors current right countSelf
+								else
+										if currentState && countSelf
+										then Number 1 $ countRowNeighbors current right countSelf
+										else Number 0 $ countRowNeighbors current right countSelf
+						}
+				},
+			Tile leftIndex leftState leftNext ->
+				case current of {
+					Nil -> Nul, -- when left is the last element
+					Tile currentIndex currentState right ->
+						case right of {
+							Nil ->
+								if leftState
+								then
+									if currentState && countSelf
+									then Number 2 Nul
+									else Number 1 Nul
+								else
+									if currentState && countSelf
+									then Number 1 $ Nul
+									else Number 0 $ Nul,
+							Tile rightIndex rightState rightNext ->
+							if leftState
+							then
+								if rightState
+								then
+									if currentState && countSelf
+									then Number 3 $ countRowNeighbors current right countSelf
+									else Number 2 $ countRowNeighbors current right countSelf
+								else
+									if currentState && countSelf
+									then Number 2 $ countRowNeighbors current right countSelf
+									else Number 1 $ countRowNeighbors current right countSelf
+							else
+								if rightState
+								then
+									if currentState && countSelf
+									then Number 2 $ countRowNeighbors current right countSelf
+									else Number 1 $ countRowNeighbors current right countSelf
+								else
+									if currentState && countSelf
+									then Number 1 $ countRowNeighbors current right countSelf
+									else Number 0 $ countRowNeighbors current right countSelf
+						}
+				}
+		}
+
+-- Takes 3 IntList zips them into 1 IntList, by suming all the same index values
+zipSum : IntList -> IntList -> IntList -> IntList
+zipSum top middle bottom =
+	case top of {
+		Nul -> Nul,
+		Number topNumNeighbors topNext ->
+			case middle of {
+				Nul -> Nul,
+				Number middleNumNeighbors middleNext ->
+					case bottom of {
+						Nul -> Nul,
+						Number bottomNumNeighbors bottomNext ->
+							let sum = topNumNeighbors + middleNumNeighbors + bottomNumNeighbors in
+              Number sum (zipSum topNext middleNext bottomNext)
+					}
+			}
+	}
+
+--
+zipSumEdge : IntList -> IntList -> IntList
+zipSumEdge middle other =
+	case other of {
+		Nul -> Nul,
+		Number otherNumNeighbors otherNext ->
+			case middle of {
+				Nul -> Nul,
+				Number middleNumNeighbors middleNext ->
+					let sum = otherNumNeighbors + middleNumNeighbors in
+					Number sum (zipSumEdge middleNext otherNext)
+			}
+	}
+
+-- Given a List of World tiles and a list of number of neighbors, both with the same size
+-- Will calculete the next state of a tile acording to the same index number of neighbors
+-- from the "numNeighborsList"
+gameOfLife : World -> IntList -> World
+gameOfLife row numNeighborsList =
+		case row of{
+			Nil -> Nil,
+			Tile index state next ->
+					case numNeighborsList of{
+						Nul -> Nil,
+						Number numNeighbors xs ->
+								let newState = applyGoLRules numNeighbors state in
+								let newNext = gameOfLife next xs in
+								Tile index newState newNext
+					}
+		}
+
+-- Applies the Game of life rules given a number of neighbors and current state
+-- returs the next correct state
+applyGoLRules : Int -> Bool -> Bool
+applyGoLRules numNeighbors alive =
+			if alive && numNeighbors < 2 then False            -- underpopulation
+			else if alive && numNeighbors > 3 then False       -- overpopulation
+			else if (not alive) && numNeighbors == 3 then True -- reproduction
+			else alive
+
+
+-- MAIN ----------------------------------------------------------------------------
+main : String
 main =
-  let (c, s) = new GameChannel in
-  fork (sink (client[Skip] c 10 99 10 (initWorld 99)));
-  sink(server[Skip] s)
+			let numOfGenerations = 1000 in
+			let worldSize = 12000 in
+			let rowSize = 200 in
+			let world = initWorld worldSize in
+			printWorld world rowSize rowSize;
+			printStringLn " ";
+			printStringLn " ";
+			let _ = generations numOfGenerations worldSize rowSize (world) in
+			" "
 
 initWorld : Int -> World
 initWorld n = if n == 0
               then Nil
-              else Tile n (semiRandomBool n) (initWorld (n-1))
+              else Tile n (multiplesThree n) (initWorld (n-1))
 
-semiRandomBool : Int -> Bool
-semiRandomBool n = n == 45 || n == 46 || n == 47 || n == 56 || n == 36
+multiplesThree : Int -> Bool
+multiplesThree n = (mod n 3) == 0
 
--- Prints the world with chars
-printWorld : forall a:SL => World -> Int -> ()
-printWorld world rowSize =
+printWorld : World -> Int -> Int -> ()
+printWorld world rowSize i =
  case world of {
     Nil ->
-       printChar '_',
-    Tile i b l ->
+       printString " ",
+    Tile _ b l ->
        let _ = if b
-               then printChar '#'
-               else printChar '_' in
-       let iMod = mod i rowSize in
-       let _ = if iMod == 0 && i > 1
-               then printUnitLn ()
-               else ()
-       in printWorld[a] l rowSize
+               then printString "."
+               else printString " " in
+       let i = if i == 1
+               then
+                 let _ = printUnitLn () in
+                 rowSize
+               else i-1
+       in printWorld l rowSize i
     }
-
-sink : Skip -> ()
-sink _ = ()

@@ -99,7 +99,7 @@ server s =
       		let (size, s) = receive s in
       		let (rowSize, s) = receive s in
       		let (world, s) = serverWorld[a] s in
-					let world = generations iterations size rowSize world in
+					let world = generations iterations size rowSize 4 world in   -- TO CHANGE 4 to n !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
       		s
    }
 
@@ -141,54 +141,60 @@ serverNumber s =
 -- SERVER FUNCTIONS --------------------------------------------------------------------
 -- Parallelism -------------------------------------------------------------------------
 -- iterations
-generations : Int -> Int -> Int -> World -> World
-generations iterations size rowSize world =
+generations : Int -> Int -> Int -> Int -> World -> World
+generations iterations size rowSize cores world =
 	if iterations == 0
 	then world
 	else
 	  let (w, r) = new IntListChannel in
 		let _ = select Nul w in -- TO USE LINEAR VAR
-		let (read, read2) = splitWork r world (size/rowSize) (size/rowSize) rowSize in
+		let (read, read2) = splitWork r world (size/rowSize) (size/rowSize) rowSize ((size/rowSize)/cores) in
 		let (_,_) = serverList[Skip] read in
 		let (newGen, _) = serverWorld[Skip] read2 in
 		printStringLn " ";
 		printWorld newGen rowSize rowSize;
 		printStringLn " ";
-		generations (iterations-1) size rowSize newGen
+		generations (iterations-1) size rowSize cores newGen
 
 -- [  top ]
 -- [middle]
 -- [bottom]
-splitWork : dualof IntListChannel -> World -> Int -> Int -> Int -> (dualof IntListChannel, dualof WorldChannel)
-splitWork topRead world index size rowSize =
+splitWork : dualof IntListChannel -> World -> Int -> Int -> Int -> Int -> (dualof IntListChannel, dualof WorldChannel)
+splitWork topRead world index size rowSize partitionSize =
 	if index == size
 	then
 		-- TOP ROW
 		let (_, _) = serverList[Skip] topRead in -- TO USE LINEAR VAR
-		let (row, tail) = splitRow world rowSize in
+		let (partition, tail) = splitRow world (partitionSize*rowSize) in
+		--printWorld partition 10 10;
+		--printInt index;
 		let (write, read) = new IntListChannel in
 		let (write2, read2) = new IntListChannel in
 		let (write3, read3) = new WorldChannel in
-		let (bottomRead, bottomRead2) = splitWork read2 tail (index - 1) size rowSize in
-		let _ = fork(subserverTop row bottomRead bottomRead2 write write2 write3) in
+		let (bottomRead, bottomRead2) = splitWork read2 tail (index - partitionSize) size rowSize partitionSize in
+		let _ = fork(subserverTop partition partitionSize partitionSize rowSize bottomRead bottomRead2 write write2 write3) in
 		(read, read3)
 	else
 	-- BOTTOM ROW
-		if index == 1
+		if index <= partitionSize
 		then
-			let (row, tail) = splitRow world rowSize in
+			let (partition, tail) = splitRow world (partitionSize*rowSize) in
+			--printWorld partition 10 10;
+			--printInt index;
 	    let (write, read) = new IntListChannel in
 			let (write2, read2) = new WorldChannel in
-	    let _ = fork(subserverBottom row topRead write write2) in
+	    let _ = fork(subserverBottom partition partitionSize partitionSize rowSize topRead write write2) in
 	    (read, read2)
 		else
 			-- MIDDLE ROWS
-	    let (row, tail) = splitRow world rowSize in
+	    let (partition, tail) = splitRow world (partitionSize*rowSize) in
+						--printWorld partition 10 10;
+						--printInt index;
 	    let (write, read) = new IntListChannel in
 	    let (write2, read2) = new IntListChannel in
 			let (write3, read3) = new WorldChannel in
-	    let (bottomRead, bottomRead2) = splitWork read2 tail (index - 1) size rowSize in
-	    let _ = fork(subserver row topRead bottomRead bottomRead2 write write2 write3) in
+	    let (bottomRead, bottomRead2) = splitWork read2 tail (index - partitionSize) size rowSize partitionSize in
+	    let _ = fork(subserver partition partitionSize partitionSize rowSize topRead bottomRead bottomRead2 write write2 write3) in
 	    (read, read3)
 
 --
@@ -205,41 +211,137 @@ splitRow world rowSize =
 					( Tile index state row, tail)
 		}
 
-subserverTop : World -> dualof IntListChannel -> dualof WorldChannel -> IntListChannel -> IntListChannel -> WorldChannel -> ()
-subserverTop row bottomRead bottomRead2 write write2 write3 =
+subserverTop : World -> Int -> Int -> Int -> dualof IntListChannel -> dualof WorldChannel -> IntListChannel -> IntListChannel -> WorldChannel -> ()
+subserverTop partition index size rowSize bottomRead bottomRead2 write write2 write3 =
 		let _ = select Nul write in
-		let numNeighbors = countRowNeighbors Nil row False in
-		let numNeighborsWithSelf = countRowNeighbors Nil row True in
-		let _ = clientList[Skip] write2 numNeighborsWithSelf in
-		let (rowBottom, _) = serverList[Skip] bottomRead in
-		let world = generateEdge numNeighbors rowBottom row in
+		let (intList, world) = splitWorkSeqTop partition Nul index size rowSize bottomRead write2  in
 		let (bottomWorld, _) = serverWorld[Skip] bottomRead2 in
 		let _ = fork(sink(clientWorld[Skip] write3 (concat world bottomWorld))) in
 		()
 
-subserver : World -> dualof IntListChannel -> dualof IntListChannel -> dualof WorldChannel  -> IntListChannel -> IntListChannel -> WorldChannel -> ()
-subserver row topRead bottomRead bottomRead2 write write2 write3 =
-		let numNeighbors = countRowNeighbors Nil row False in
-		let numNeighborsWithSelf = countRowNeighbors Nil row True in
-		let (rowTop, _) = serverList[Skip] topRead in
-		let _ = clientList[Skip] write2 numNeighborsWithSelf in
-		let (rowBottom, _) = serverList[Skip] bottomRead in
-		let _ = clientList[Skip] write numNeighborsWithSelf in
-		let world = generateMiddle rowTop numNeighbors rowBottom row in
+subserver : World -> Int -> Int -> Int -> dualof IntListChannel -> dualof IntListChannel -> dualof WorldChannel  -> IntListChannel -> IntListChannel -> WorldChannel -> ()
+subserver partition index size rowSize topRead bottomRead bottomRead2 write write2 write3 =
+		let (intList, world) = splitWorkSeqMiddle partition Nul index size rowSize topRead bottomRead write write2  in
 		let (bottomWorld, _) = serverWorld[Skip] bottomRead2 in
 		let _ = clientWorld[Skip] write3 (concat world bottomWorld) in
 		()
 
-subserverBottom : World -> dualof IntListChannel -> IntListChannel -> WorldChannel -> ()
-subserverBottom row topRead write write2 =
-		let numNeighbors = countRowNeighbors Nil row False in
-		let numNeighborsWithSelf = countRowNeighbors Nil row True in
-		let (rowTop, _) = serverList[Skip] topRead in
-		let _ = clientList[Skip] write numNeighborsWithSelf in
-		let world = generateEdge rowTop numNeighbors row in
+subserverBottom : World -> Int -> Int -> Int -> dualof IntListChannel -> IntListChannel -> WorldChannel -> ()
+subserverBottom partition index size rowSize topRead write write2 =
+		let (intList, world) = splitWorkSeqBottom partition Nul index size rowSize topRead write in
 		let _ = clientWorld[Skip] write2 world in
 		()
 
+splitWorkSeqTop : World -> IntList -> Int -> Int -> Int -> dualof IntListChannel -> IntListChannel -> (IntList, World)
+splitWorkSeqTop world topRow index size rowSize bottomRead write2 =
+	if index == size
+	then
+		-- TOP ROW
+		let (row, tail) = splitRow world rowSize in
+		let numNeighbors = countRowNeighbors Nil row False in
+		let numNeighborsWithSelf = countRowNeighbors Nil row True in
+		let (bottomRow, bottomWorld) = splitWorkSeqTop tail numNeighborsWithSelf (index - 1) size rowSize bottomRead write2 in
+		let sumNeighbors = zipSumEdge numNeighbors bottomRow in
+		let newWorld = gameOfLife row sumNeighbors in
+		(numNeighborsWithSelf, concat newWorld bottomWorld)
+	else
+	-- BOTTOM ROW
+		if index == 1
+		then
+			let (row, tail) = splitRow world rowSize in
+			let numNeighbors = countRowNeighbors Nil row False in
+			let numNeighborsWithSelf = countRowNeighbors Nil row True in
+			let _ = clientList[Skip] write2 numNeighborsWithSelf in
+			let (rowBottom, _) = serverList[Skip] bottomRead in
+			let sumNeighbors = zipSum topRow numNeighbors rowBottom in
+			let newWorld = gameOfLife row sumNeighbors in
+	    (numNeighborsWithSelf, newWorld)
+		else
+			-- MIDDLE ROWS
+	    let (row, tail) = splitRow world rowSize in
+			let numNeighbors = countRowNeighbors Nil row False in
+			let numNeighborsWithSelf = countRowNeighbors Nil row True in
+			let (bottomRow, bottomWorld) = splitWorkSeqTop tail numNeighborsWithSelf (index - 1) size rowSize bottomRead write2 in
+	    let sumNeighbors = zipSum topRow numNeighbors bottomRow in
+			let newWorld = gameOfLife row sumNeighbors in
+			(numNeighborsWithSelf, concat newWorld bottomWorld)
+
+
+splitWorkSeqMiddle : World -> IntList -> Int -> Int -> Int -> dualof IntListChannel -> dualof IntListChannel -> IntListChannel -> IntListChannel -> (IntList, World)
+splitWorkSeqMiddle world topRow index size rowSize topRead bottomRead write write2 =
+	if index == size
+	then
+		-- TOP ROW
+		let (row, tail) = splitRow world rowSize in
+		let numNeighbors = countRowNeighbors Nil row False in
+		let numNeighborsWithSelf = countRowNeighbors Nil row True in
+		let (c, s) = new IntListChannel in -- create dummy
+		let (rowTop, _) = serverList[Skip] topRead in
+		let _ = clientList[Skip] write numNeighborsWithSelf in
+		let (bottomRow, bottomWorld) = splitWorkSeqMiddle tail numNeighborsWithSelf (index - 1) size rowSize s bottomRead c write2 in
+		let sumNeighbors = zipSum rowTop numNeighbors bottomRow in
+		let newWorld = gameOfLife row sumNeighbors in
+		(numNeighborsWithSelf, concat newWorld bottomWorld)
+	else
+	-- BOTTOM ROW
+		if index == 1
+		then
+			let _ = select Nul write in -- use Dummy
+			let (_,_) = serverList[Skip] topRead in -- use Dummy
+			let (row, tail) = splitRow world rowSize in
+			let numNeighbors = countRowNeighbors Nil row False in
+			let numNeighborsWithSelf = countRowNeighbors Nil row True in
+			let _ = clientList[Skip] write2 numNeighborsWithSelf in
+			let (rowBottom, _) = serverList[Skip] bottomRead in
+			let sumNeighbors = zipSum topRow numNeighbors rowBottom in
+			let newWorld = gameOfLife row sumNeighbors in
+	    (numNeighborsWithSelf, newWorld)
+		else
+			-- MIDDLE ROWS
+	    let (row, tail) = splitRow world rowSize in
+			let numNeighbors = countRowNeighbors Nil row False in
+			let numNeighborsWithSelf = countRowNeighbors Nil row True in
+			let (bottomRow, bottomWorld) = splitWorkSeqMiddle tail numNeighborsWithSelf (index - 1) size rowSize topRead bottomRead write write2 in
+	    let sumNeighbors = zipSum topRow numNeighbors bottomRow in
+			let newWorld = gameOfLife row sumNeighbors in
+			(numNeighborsWithSelf, concat newWorld bottomWorld)
+
+splitWorkSeqBottom : World -> IntList -> Int -> Int -> Int -> dualof IntListChannel -> IntListChannel -> (IntList, World)
+splitWorkSeqBottom world topRow index size rowSize topRead write =
+	if index == size
+	then
+		-- TOP ROW
+		let (row, tail) = splitRow world rowSize in
+		let numNeighbors = countRowNeighbors Nil row False in
+		let numNeighborsWithSelf = countRowNeighbors Nil row True in
+		let (c, s) = new IntListChannel in -- create dummy
+		let (rowTop, _) = serverList[Skip] topRead in
+		let _ = clientList[Skip] write numNeighborsWithSelf in
+		let (bottomRow, bottomWorld) = splitWorkSeqBottom tail numNeighborsWithSelf (index - 1) size rowSize s c in
+		let sumNeighbors = zipSum rowTop numNeighbors bottomRow in
+		let newWorld = gameOfLife row sumNeighbors in
+		(numNeighborsWithSelf, concat newWorld bottomWorld)
+	else
+	-- BOTTOM ROW
+		if index == 1
+		then
+			let _ = select Nul write in -- use Dummy
+			let (_,_) = serverList[Skip] topRead in -- use Dummy
+			let (row, tail) = splitRow world rowSize in
+			let numNeighbors = countRowNeighbors Nil row False in
+			let numNeighborsWithSelf = countRowNeighbors Nil row True in
+			let sumNeighbors = zipSumEdge topRow numNeighbors in
+			let newWorld = gameOfLife row sumNeighbors in
+	    (numNeighborsWithSelf, newWorld)
+		else
+			-- MIDDLE ROWS
+	    let (row, tail) = splitRow world rowSize in
+			let numNeighbors = countRowNeighbors Nil row False in
+			let numNeighborsWithSelf = countRowNeighbors Nil row True in
+			let (bottomRow, bottomWorld) = splitWorkSeqBottom tail numNeighborsWithSelf (index - 1) size rowSize topRead write in
+	    let sumNeighbors = zipSum topRow numNeighbors bottomRow in
+			let newWorld = gameOfLife row sumNeighbors in
+			(numNeighborsWithSelf, concat newWorld bottomWorld)
 
 concat : World -> World -> World
 concat xs ys =
@@ -411,11 +513,15 @@ applyGoLRules numNeighbors alive =
 
 main : String
 main =
-  let world = initWorld 1000 in
-  printWorld world 100 100;
+	let cores = 2 in
+	let numOfGenerations = 1000 in
+	let worldSize = 12000 in
+	let rowSize = 200 in -- (worldSize/rowSize) / cores == whole number ?
+  let world = initWorld worldSize in
+  printWorld world rowSize rowSize;
   printStringLn " ";
 	printStringLn " ";
-  let _ = generations 1000 1000 100 (world) in " "
+  let _ = generations numOfGenerations worldSize rowSize cores (world) in " "
 
 initWorld : Int -> World
 initWorld n = if n == 0
@@ -432,7 +538,7 @@ printWorld world rowSize i =
        printString " ",
     Tile _ b l ->
        let _ = if b
-							 then printString "O"
+							 then printString "."
 							 else printString " " in
        let i = if i == 1
                then
