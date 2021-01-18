@@ -13,10 +13,6 @@ initWorld n = if n == 0
               else Tile n (semiRandomBool n) (initWorld (n-1))
 
 -- TODO find a better way to randamize bools
---semiRandomBool : Int -> Bool
---semiRandomBool n = (mod n 13) == 0
-
--- TODO find a better way to randamize bools
 semiRandomBool : Int -> Bool
 semiRandomBool n = n == 105 || n == 106 || n == 107 || n == 126 || n == 86
 
@@ -132,8 +128,8 @@ generate world current rowSize =
 
 gameOfLife : WorldList -> Int -> Int -> ()
 gameOfLife world rowSize numIterations = let newGen = generate[Skip] world world rowSize in
-										                     let _ = printWorld[Skip] newGen rowSize in
-                                         let _ = printUnitLn (); printUnitLn () in
+										                     --let _ = printWorld[Skip] newGen rowSize in
+                                         --let _ = printUnitLn (); printUnitLn () in
 										                     let _ = if numIterations == 0
 										 		                         then ()
 									     		                       else gameOfLife newGen rowSize (numIterations-1) in
@@ -145,6 +141,6 @@ gameOfLife world rowSize numIterations = let newGen = generate[Skip] world world
 -- ##############################################################################################
 
 main:()
-main = let world = initWorld 299 in -- 100 elements
-       let rowSize = 20 in         -- 10 rowSize
-       gameOfLife world rowSize 8  -- 5 generations
+main = let world = initWorld 500 in -- 100 elements
+       let rowSize = 100 in         -- 10 rowSize
+       gameOfLife world rowSize 10  -- 5 generations

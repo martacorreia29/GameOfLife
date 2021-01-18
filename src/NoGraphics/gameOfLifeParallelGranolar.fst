@@ -184,9 +184,6 @@ generations iterations size rowSize cores world =
 		then
 			-- Sequential
 			let (_,newGen) = splitWorkSeq world Nul partitionSize partitionSize rowSize in
-			printStringLn " ";
-			printWorld newGen rowSize rowSize;
-			printStringLn " ";
 			generations (iterations-1) size rowSize cores newGen
 		else
 			-- Par
@@ -195,9 +192,6 @@ generations iterations size rowSize cores world =
 			let (read, read2) = splitWork r world numOfRows numOfRows rowSize partitionSize in
 			let (_,_) = serverList[Skip] read in
 			let (newGen, _) = serverWorld[Skip] read2 in
-			printStringLn " ";
-			printWorld newGen rowSize rowSize;
-			printStringLn " ";
 			generations (iterations-1) size rowSize cores newGen
 
 ---
@@ -721,8 +715,8 @@ main =
   printWorld world rowSize rowSize;
   printStringLn " ";
 	printStringLn " ";
-  let _ = generations numOfGenerations worldSize rowSize cores (world) in
-	" "
+  let world = generations numOfGenerations worldSize rowSize cores (world) in
+	let _ = printWorld world rowSize rowSize in " "
 
 
 ----

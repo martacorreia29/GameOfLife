@@ -29,9 +29,6 @@ generations iterations size rowSize world =
 	then world
 	else
 		let (_ , newGen) = splitWork world Nul (size/rowSize) (size/rowSize) rowSize in
-		printStringLn " ";
-		printWorld newGen rowSize rowSize;
-		printStringLn " ";
 		generations (iterations-1) size rowSize newGen
 
 ---
@@ -276,7 +273,8 @@ main =
 			printWorld world rowSize rowSize;
 			printStringLn " ";
 			printStringLn " ";
-			let _ = generations numOfGenerations worldSize rowSize (world) in " "
+			let world = generations numOfGenerations worldSize rowSize (world) in
+			let _ = printWorld world rowSize rowSize in " "
 
 ---
 -- Creates a liked list of size n, representing the world
