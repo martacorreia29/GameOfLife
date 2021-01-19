@@ -489,7 +489,7 @@ applyGoLRules numNeighbors alive =
 main : String
 main =
 	let numOfGenerations = 10 in
-	let worldSize = 100 in
+	let worldSize = 1000 in
 	let rowSize = 10 in
 	let world = initWorld worldSize in
 	printWorld world rowSize rowSize;

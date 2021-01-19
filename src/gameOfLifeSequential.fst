@@ -8,10 +8,11 @@
 -- taking into account the neightbouring upper and bottom rows.
  -}
 
--- Represents a linked list of bools
+-- Represents a linked list of Tiles, that represent a cell, which is made of an index (Int)
+-- and a state (Bool)
 data World = Nil | Tile Int Bool World
 
--- A simple linked int list, used to store the number of neighbors around a tile
+-- Represents a linked list of Numbers, that represent the number of neighbors of a cell
 data IntList = Nul | Number Int IntList
 
 ----------------------------------------------------------------------------------------
@@ -20,8 +21,8 @@ data IntList = Nul | Number Int IntList
 
 ---
 -- Given a number of generations (iterations), this function will call splitwork
--- to generate the next generation of the game of life,
--- returns the end resulto of each generate.
+-- to generate the next generation of the game of life
+-- Returns the end result of each generate
 ---
 generations : Int -> Int -> Int -> World -> World
 generations iterations size rowSize world =
@@ -41,17 +42,18 @@ generations iterations size rowSize world =
 --   ...
 -- [bottom]
 --
--- This recursive function will divide the world linked list in rows of rowSize,
--- for each row it will calculate a Intlist that on each node on the list will
+-- This recursive function will divide the world linked list in rows of rowSize
+-- For each row it will calculate a Intlist that on each node on the list will
 -- contain the number of alive neighbors (left and right and maybe self) that the node has.
--- On each row two of this IntLists will be created numNeighbors and numNeighborsWithSelf,
+-- On each row, two of this IntLists will be created numNeighbors and numNeighborsWithSelf,
 -- numNeighborsWithSelf will be send down and up the recursive call stack.
--- On each row after receiving the IntLists topRow (number neighbors list) from up the recursive call stack
+-- After receiving the IntLists topRow (number neighbors list) from up the recursive call stack
 -- and the rowBottom (number neighbors list) from down the recursive call stack it will
--- zip sum these 2 lists with numNeighbors and call gameOfLife function to apply the rules of Gol
--- to row given that sumed list of neighbors. The result process row is then send up the recursive call stack.
+-- zip sum these 2 lists with numNeighbors and calls gameOfLife function to apply the rules of Gol
+-- to row given that summed list of neighbors. The result process row is then send up the recursive call stack.
 --
--- topRead: the receiving end of a IntListChannel created by the recursive parent of this current recursive iteration
+-- topRead: the receiving end of a IntListChannel created by the recursive parent of
+-- this current recursive iteration
 -- world: a world liked list
 -- size: number of row
 -- rowSize: size of each row
@@ -91,7 +93,7 @@ splitWork world topRow index size rowSize =
 
 ---
 -- Given a linked list and a rowSize this function will split the list at rowSize
--- returs a pair containing the a list of the first rowSize elemests of world
+-- Returs a pair containing the a list of the first rowSize elemests of world
 -- and the remaing world list without those first rowSize elemests
 ---
 splitRow : World -> Int -> (World, World)
@@ -118,10 +120,11 @@ concat xs ys =
   }
 
 ---
--- [l][i][r]
--- For each tile in the row, it will count if l i and r are alive and place that number in i.
--- countSelf: If i is alive and this is true, i will be counted.
--- returns a list of all the alive tiles for each (l, i, r) group
+--[l][i][r]
+-- For each tile in the row, it will count if l, i and r are alive and place that number in i.
+-- countSelf: If i is alive and this is true, i will be counted; otherwise, it will only counted
+-- l and r as a neighbor to the cell
+-- Returns a list of all the alive tiles for each (l, i, r) group
 ---
 countRowNeighbors : World -> World -> Bool -> IntList
 countRowNeighbors left current countSelf =
@@ -190,7 +193,7 @@ countRowNeighbors left current countSelf =
 
 
 ---
--- Takes 3 IntList zips them into 1 IntList, by suming all the same index values
+-- Takes 3 IntList zips them into 1 IntList, by summing all the same index values
 ---
 zipSum : IntList -> IntList -> IntList -> IntList
 zipSum top middle bottom =
@@ -210,7 +213,7 @@ zipSum top middle bottom =
 	}
 
 ---
--- Creates a new linked list IntList that is the zip sum of two Intlist lists
+-- Takes 2 IntList and zips them into 1 IntList, by summing all the same index values
 ---
 zipSumEdge : IntList -> IntList -> IntList
 zipSumEdge middle other =
@@ -227,8 +230,8 @@ zipSumEdge middle other =
 
 
 ---
--- Given a List of World tiles and a list of number of neighbors, both with the same size
--- Will calculete the next state of a tile acording to the same index number of neighbors
+-- Given a List of World tiles and a list of number of neighbors, both with the same size,
+-- it will calculate the next state of a tile acording to the same index number of neighbors
 -- from the "numNeighborsList"
 ---
 gameOfLife : World -> IntList -> World
@@ -247,7 +250,7 @@ gameOfLife row numNeighborsList =
 
 ---
 -- Applies the Game of life rules given a number of neighbors and current state
--- returs the next correct state
+-- Returs the next correct state
 ---
 applyGoLRules : Int -> Bool -> Bool
 applyGoLRules numNeighbors alive =
@@ -261,17 +264,14 @@ applyGoLRules numNeighbors alive =
 ----------------------------------------------------------------------------------------
 
 ---
--- Main:
--- Iniciates the world
--- Prints the inicial worldSize
--- Calls generations to apply the algorithm
--- Prints the end result world
+-- Iniciates the world, prints the inicial worldSize and calls generations to apply
+-- the algorithm
 ---
 main : String
 main =
 			let numOfGenerations = 10 in
-			let worldSize = 10000 in
-			let rowSize = 100 in
+			let worldSize = 100 in
+			let rowSize = 10 in
 			let world = initWorld worldSize in
 			printWorld world rowSize rowSize;
 			printStringLn " ";
@@ -286,9 +286,9 @@ initWorld n = if n == 0
               then Nil
               else Tile n (multiplesThree n) (initWorld (n-1))
 
----
+----
+-- Used to randomize alive cells at the start of the simulation
 -- Returns true if n is a multiple of 3
--- used to randamize alive cells at the start of the simulatio
 ---
 multiplesThree : Int -> Bool
 multiplesThree n = (mod n 3) == 0

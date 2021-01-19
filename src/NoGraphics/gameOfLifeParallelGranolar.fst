@@ -178,8 +178,8 @@ generations iterations size rowSize cores world =
 	if iterations == 0
 	then world
 	else
-		let partitionSize = ((size/rowSize)/cores) in
 		let numOfRows = (size/rowSize) in
+		let partitionSize = if cores > numOfRows then numOfRows else (numOfRows/cores) in
 		if partitionSize == numOfRows
 		then
 			-- Sequential
@@ -707,9 +707,9 @@ applyGoLRules numNeighbors alive =
 ---
 main : String
 main =
-	let cores = 4 in
+	let cores = 6 in
 	let numOfGenerations = 10 in
-	let worldSize = 1000 in
+	let worldSize = 10000 in
 	let rowSize = 100 in -- (worldSize/rowSize) / cores == whole number ?
   let world = initWorld worldSize in
   printWorld world rowSize rowSize;

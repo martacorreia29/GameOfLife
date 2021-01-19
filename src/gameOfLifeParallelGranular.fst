@@ -3,17 +3,18 @@
 -- Description :  Parallelization of Conway's Game of Life algorithm
 -- Authores    :  Diogo Soares Nº 44935; Marta Correia Nº 51022
 --
--- The following is an attempt at parallazing Conway's Game of Life algorithm by
+-- The following it's a parallel way of implementating Conway's Game of Life algorithm by
 -- dividing the world matrix in partitions and processing each partition on
 -- a diffente thread. Each thread will then divide the partition in rows
 -- and apply the algorithm to each row individually, taking into account the
 -- neightbouring upper and bottom rows.
  -}
 
--- Represents a linked list of bools
+-- Represents a linked list of Tiles, that represent a cell, which is made of an index (Int)
+-- and a state (Bool)
 data World = Nil | Tile Int Bool World
 
--- A simple linked int list, used to store the number of neighbors around a tile
+-- Represents a linked list of Numbers, that represent the number of neighbors of a cell
 data IntList = Nul | Number Int IntList
 
 -- Channel used to transfer objects inside of World
@@ -63,8 +64,8 @@ clientWorld c world =
       }
 
 ---
--- For each TileChannel channel this function receives it will send to the other
--- end of the channel the index and state that represent a World Tile
+-- For each TileChannel channel this function receives, it will send to the other
+-- end of the channel the index and state that represents a World Tile
 ---
 clientTile : forall a:SL => TileChannel; a -> Int -> Bool -> World -> a
 clientTile c index state next =
@@ -81,7 +82,7 @@ clientTile c index state next =
     }
 
 ---
--- Simillar to clientWorld but for IntLists linked lists
+-- Similar to clientWorld but for IntLists linked lists
 ---
 clientList : forall a:SL => IntListChannel; a -> IntList -> a
 clientList c numNeighbors =
@@ -93,7 +94,7 @@ clientList c numNeighbors =
       }
 
 ---
--- Simillar to clientTile but passes to the other end of the channel a Int num
+-- Similar to clientTile but passes to the other end of the channel an Int num
 -- that represents a Number in the IntList
 ---
 clientNumber : forall a:SL => NumberChannel; a -> Int -> IntList -> a
@@ -108,15 +109,14 @@ clientNumber c num next =
 		    	c
     }
 
-
 ----------------------------------------------------------------------------------------
 -- CHANNEL SERVER END FUNCTIONS --------------------------------------------------------
 ----------------------------------------------------------------------------------------
 
 ---
--- Depeding o the state of the dualof channel received if its a Tile was send
--- throw the channel it will call serverTile to process it.
--- returns the complet received world
+-- Depending o the state of the dualof channel received, if a Tile was send
+-- through the channel, it will call serverTile to process it
+-- Returns the complet received world
 ---
 serverWorld : forall a:SL => dualof WorldChannel; a -> (World, a)
 serverWorld s =
@@ -129,8 +129,9 @@ serverWorld s =
     }
 
 ---
--- Given a dualof TileChannel, it will wait to receive the index and state from the other end of the channel and
--- recursively recostruct the world being send throw the channels.
+-- Given a dualof TileChannel, it will wait to receive the index and state
+-- from the other end of the channel, and recursively reconstruct the world being
+-- send through the channels
 ---
 serverTile : forall a:SL => dualof TileChannel; a -> (World, a)
 serverTile s =
@@ -141,7 +142,7 @@ serverTile s =
         (Tile index state next, select Exit s)
 
 ---
--- Simillar to serverWorld but for IntLists linked lists
+-- Similar to serverWorld but for IntLists linked lists
 ---
 serverList : forall a:SL => dualof IntListChannel; a -> (IntList, a)
 serverList s =
@@ -154,7 +155,7 @@ serverList s =
     }
 
 ---
--- Simillar to serverTile but it will recostruct a Intlist
+-- Similar to serverTile but it will reconstruct an Intlist
 ---
 serverNumber : forall a:SL => dualof NumberChannel; a -> (IntList, a)
 serverNumber s =
@@ -169,17 +170,17 @@ serverNumber s =
 
 ---
 -- Given a number of generations (iterations), this function will call splitwork
--- to generate the next generation of the game of life,
--- if the cores == 1 then it will the the algorithm sequencially.
--- returns the end resulto of each generate.
+-- to generate the next generation of the game of life.If the cores == 1 then
+-- it will execute the algorithm sequencially
+-- Returns the end result of each generate
 ---
 generations : Int -> Int -> Int -> Int -> World -> World
 generations iterations size rowSize cores world =
 	if iterations == 0
 	then world
 	else
-		let partitionSize = ((size/rowSize)/cores) in
 		let numOfRows = (size/rowSize) in
+		let partitionSize = if cores > numOfRows then numOfRows else (numOfRows/cores) in
 		if partitionSize == numOfRows
 		then
 			-- Sequential
@@ -189,7 +190,7 @@ generations iterations size rowSize cores world =
 			printStringLn " ";
 			generations (iterations-1) size rowSize cores newGen
 		else
-			-- Par
+			-- Parallel
 		  let (w, r) = new IntListChannel in
 			let _ = select Nul w in -- TO USE LINEAR VAR
 			let (read, read2) = splitWork r world numOfRows numOfRows rowSize partitionSize in
@@ -207,18 +208,20 @@ generations iterations size rowSize cores world =
 --   ...
 -- [bottom]
 --
--- This recursive function will split the given linked list world in n parts of partitionSize * rowSize, each of these
--- n part will be given to a subserver running on a new thread, it will also create 2 IntListChannels and a WorldChannel
--- for each subserver, the former are to pass information between subserver during calculation, the latter is used by
--- each subserver to return the result world up the subserver chain. This subserver are created recursively and are chained linked
--- by the channels.
+-- This recursive function will split the given linked list world in n parts of
+-- partitionSize * rowSize, each of these n part will be given to a subserver
+-- running on a new thread. It will also create 2 IntListChannels and a WorldChannel
+-- for each subserver, the former are to pass information between subserver during
+-- calculation, the later is used by each subserver to return the result world
+-- up the subserver chain. These subservers are created recursively and are chained
+-- linked by the channels
 --
--- topRead: the receiving end of a IntListChannel created by the recursive parent of this current recursive iteration
+-- topRead: the receiving end of a IntListChannel created by the recursive
+-- parent of this current recursive iteration
 -- world: a world liked list
--- size: number of row
+-- size: number of rows
 -- rowSize: size of each row
--- partitionSize: number of row on a partition
--- retuns a pair composed of the receiving end of bottom liked subserver IntListChannel and WorldChannel
+-- Returns a pair composed of the receiving end of bottom liked subserver IntListChannel and WorldChannel
 ---
 splitWork : dualof IntListChannel -> World -> Int -> Int -> Int -> Int -> (dualof IntListChannel, dualof WorldChannel)
 splitWork topRead world index size rowSize partitionSize =
@@ -255,8 +258,8 @@ splitWork topRead world index size rowSize partitionSize =
 
 ---
 -- Given a linked list and a rowSize this function will split the list at rowSize
--- returs a pair containing the a list of the first rowSize elemests of world
--- and the remaing world list without those first rowSize elemests
+-- Returns a pair containing the list of the first rowSize elements of world
+-- and the remaing world list without those first rowSize elements
 ---
 splitRow : World -> Int -> (World, World)
 splitRow world rowSize =
@@ -274,9 +277,10 @@ splitRow world rowSize =
 ---
 -- Subserver that will apply the Gol algorithm to the upper partition of the world list,
 -- calls splitWorkSeqTop to process the partition, passing all the IntListChannels to it,
--- from down the chain reads the bottomRead WorldChannel to receive the processed bottom part of the world list
--- concats the process partition returned by splitWorkSeqTop to the processed bottom part of the world list
--- and sends it up the chain, in this case the main thread.
+-- from down the chain reads the bottomRead WorldChannel to receive the processed bottom
+-- part of the world list concats the process partition returned by splitWorkSeqTop to
+-- the processed bottom part of the world list and sends it up the chain, in this case
+-- the main thread
 ---
 subserverTop : World -> Int -> Int -> Int -> dualof IntListChannel -> dualof WorldChannel -> IntListChannel -> IntListChannel -> WorldChannel -> ()
 subserverTop partition index size rowSize bottomRead bottomRead2 write write2 write3 =
@@ -303,7 +307,7 @@ subserver partition index size rowSize topRead bottomRead bottomRead2 write writ
 ---
 -- Subserver that will apply the Gol algorithm to the bottom partition of the world list,
 -- calls splitWorkSeqBottom to process the partition, passing all the IntListChannels to it,
--- and sends process partition returned by splitWorkSeqMiddle up the subserver chain.
+-- and sends process partition returned by splitWorkSeqMiddle up the subserver chain
 ---
 subserverBottom : World -> Int -> Int -> Int -> dualof IntListChannel -> IntListChannel -> WorldChannel -> ()
 subserverBottom partition index size rowSize topRead write write2 =
@@ -312,18 +316,17 @@ subserverBottom partition index size rowSize topRead write write2 =
 		()
 
 ---
--- Receives the and process the upper partition of the main world list
--- This recursive function will divide the world linked list in rows of rowSize,
--- for each row it will calculate a Intlist that on each node on the list will
+-- Receives the upper partition of the main world list and divides recursevely
+-- the world linked list in rows of rowSize.
+-- For each row it will calculate an Intlist that on each node on the list will
 -- contain the number of alive neighbors (left and right and maybe self) that the node has.
--- On each row two of this IntLists will be created numNeighbors and numNeighborsWithSelf,
--- numNeighborsWithSelf will be send down and up the recursive call stack.
--- On each row after receiving the IntLists topRow (number neighbors list) from up the recursive call stack
--- and the rowBottom (number neighbors list) from down the recursive call stack it will
--- zip sum these 2 lists with numNeighbors and call gameOfLife function to apply the rules of Gol
--- to row given that sumed list of neighbors. The result process row is then send up the recursive call stack.
---
--- On the bottom row of this world list, there is need to communicate with subserver down the linked chain
+-- On each row, two of these IntLists will be created, numNeighbors and numNeighborsWithSelf,
+-- where numNeighborsWithSelf will be send down and up the recursive call stack.
+-- After receiving the IntLists topRow (number neighbors list), from up the recursive call stack,
+-- and the rowBottom (number neighbors list), from down the recursive call stack, it will
+-- zip sum these 2 lists with numNeighbors and calls gameOfLife function to apply the rules of Gol
+-- to row given that summed list of neighbors. The result process row is then send up the recursive call stack.
+-- On the bottom row of this world list, is necessary to communicate with subserver down the linked chain
 -- using the IntListChannels to give the bottom's numNeighborsWithSelf and receive bottomRow from that subserver.
 -- Note: if size == 1 there is no need for recursive calls
 ---
@@ -374,17 +377,16 @@ splitWorkSeqTop world topRow index size rowSize bottomRead write2 =
 			(numNeighborsWithSelf, concat newWorld bottomWorld)
 
 ---
--- Receives the and process the middle partitions of the main world list
--- This recursive function will divide the world linked list in rows of rowSize,
--- for each row it will calculate a Intlist that on each node on the list will
+-- Receives the middle partitions of the main world list and recursevely divides
+-- the world linked list in rows of rowSize
+-- For each row it will calculate a Intlist that on each node on the list will
 -- contain the number of alive neighbors (left and right and maybe self) that the node has.
--- On each row two of this IntLists will be created numNeighbors and numNeighborsWithSelf,
+-- On each row, two of this IntLists will be created numNeighbors and numNeighborsWithSelf,
 -- numNeighborsWithSelf will be send down and up the recursive call stack.
--- On each row after receiving the IntLists topRow (number neighbors list) from up the recursive call stack
+-- After receiving the IntLists topRow (number neighbors list) from up the recursive call stack
 -- and the rowBottom (number neighbors list) from down the recursive call stack it will
--- zip sum these 2 lists with numNeighbors and call gameOfLife function to apply the rules of Gol
+-- zip sum these 2 lists with numNeighbors and calls gameOfLife function to apply the rules of Gol
 -- to row given that sumed list of neighbors. The result process row is then send up the recursive call stack.
---
 -- On the upper row of the world list, there is need to communicate with subserver up the linked chain
 -- using the IntListChannels to give the upper row's numNeighborsWithSelf and receive rowTop from that subserver.
 -- On the bottom row of the world list, there is need to communicate with subserver down the linked chain
@@ -446,17 +448,16 @@ splitWorkSeqMiddle world topRow index size rowSize topRead bottomRead write writ
 
 
 ---
--- Receives the and process the bottom partition of the main world list
--- This recursive function will divide the world linked list in rows of rowSize,
--- for each row it will calculate a Intlist that on each node on the list will
+-- Receives the and process the bottom partition of the main world list and
+-- recursevely divides the world linked list in rows of rowSize,
+-- For each row it will calculate a Intlist that on each node on the list will
 -- contain the number of alive neighbors (left and right and maybe self) that the node has.
--- On each row two of this IntLists will be created numNeighbors and numNeighborsWithSelf,
+-- On each row, two of this IntLists will be created numNeighbors and numNeighborsWithSelf,
 -- numNeighborsWithSelf will be send down and up the recursive call stack.
--- On each row after receiving the IntLists topRow (number neighbors list) from up the recursive call stack
+-- After receiving the IntLists topRow (number neighbors list) from up the recursive call stack
 -- and the rowBottom (number neighbors list) from down the recursive call stack it will
--- zip sum these 2 lists with numNeighbors and call gameOfLife function to apply the rules of Gol
+-- zip sum these 2 lists with numNeighbors and calls gameOfLife function to apply the rules of Gol
 -- to row given that sumed list of neighbors. The result process row is then send up the recursive call stack.
---
 -- On the upper row of the world list, there is need to communicate with subserver up the linked chain
 -- using the IntListChannels to give the upper row's numNeighborsWithSelf and receive rowTop from that subserver.
 -- Note: if size == 1 there is no need for recursive calls
@@ -512,14 +513,14 @@ splitWorkSeqBottom world topRow index size rowSize topRead write =
 
 ---
 -- This recursive function will divide the world linked list in rows of rowSize,
--- for each row it will calculate a Intlist that on each node on the list will
+-- for each row it will calculate an Intlist that, on each node on the list, will
 -- contain the number of alive neighbors (left and right and maybe self) that the node has.
--- On each row two of this IntLists will be created numNeighbors and numNeighborsWithSelf,
--- numNeighborsWithSelf will be send down and up the recursive call stack.
--- On each row after receiving the IntLists topRow (number neighbors list) from up the recursive call stack
--- and the rowBottom (number neighbors list) from down the recursive call stack it will
+-- On each row, two of these IntLists will be created, numNeighbors and numNeighborsWithSelf,
+-- where numNeighborsWithSelf will be send down and up the recursive call stack.
+-- On each row, after receiving the IntLists topRow (number neighbors list), from up the recursive call stack,
+-- and the rowBottom (number neighbors list), from down the recursive call stack, it will
 -- zip sum these 2 lists with numNeighbors and call gameOfLife function to apply the rules of Gol
--- to row given that sumed list of neighbors. The result process row is then send up the recursive call stack.
+-- in the summed list of neighbors. The result process row is then send up the recursive call stack.
 ---
 splitWorkSeq : World -> IntList -> Int -> Int -> Int -> (IntList, World)
 splitWorkSeq world topRow index size rowSize =
@@ -564,10 +565,11 @@ concat xs ys =
   }
 
 ---
--- [l][i][r]
--- For each tile in the row, it will count if l i and r are alive and place that number in i.
--- countSelf: If i is alive and this is true, i will be counted.
--- returns a list of all the alive tiles for each (l, i, r) group
+--[l][i][r]
+-- For each tile in the row, it will count if l, i and r are alive and place that number in i.
+-- countSelf: If i is alive and this is true, i will be counted; otherwise, it will only counted
+-- l and r as a neighbor to the cell
+-- Returns a list of all the alive tiles for each (l, i, r) group
 ---
 countRowNeighbors : World -> World -> Bool -> IntList
 countRowNeighbors left current countSelf =
@@ -635,7 +637,7 @@ countRowNeighbors left current countSelf =
 		}
 
 ---
--- Takes 3 IntList zips them into 1 IntList, by suming all the same index values
+-- Takes 3 IntList zips them into 1 IntList, by summing all the same index values
 ---
 zipSum : IntList -> IntList -> IntList -> IntList
 zipSum top middle bottom =
@@ -655,7 +657,7 @@ zipSum top middle bottom =
 	}
 
 ---
--- Creates a new linked list IntList that is the zip sum of two Intlist lists
+-- Takes 2 IntList and zips them into 1 IntList, by summing all the same index values
 ---
 zipSumEdge : IntList -> IntList -> IntList
 zipSumEdge middle other =
@@ -671,8 +673,8 @@ zipSumEdge middle other =
 	}
 
 ---
--- Given a List of World tiles and a list of number of neighbors, both with the same size
--- Will calculete the next state of a tile acording to the same index number of neighbors
+-- Given a List of World tiles and a list of number of neighbors, both with the same size,
+-- it will calculate the next state of a tile acording to the same index number of neighbors
 -- from the "numNeighborsList"
 ---
 gameOfLife : World -> IntList -> World
@@ -691,7 +693,7 @@ gameOfLife row numNeighborsList =
 
 ---
 -- Applies the Game of life rules given a number of neighbors and current state
--- returs the next correct state
+-- Returns the next correct state
 ---
 applyGoLRules : Int -> Bool -> Bool
 applyGoLRules numNeighbors alive =
@@ -705,18 +707,15 @@ applyGoLRules numNeighbors alive =
 ----------------------------------------------------------------------------------------
 
 ----
--- Main:
--- Iniciates the world
--- Prints the inicial worldSize
--- Calls generations to apply the algorithm
--- Prints the end result world
+-- Iniciates the world, prints the inicial worldSize and calls generations to apply
+-- the algorithm
 ---
 main : String
 main =
 	let cores = 4 in
 	let numOfGenerations = 10 in
-	let worldSize = 1000 in
-	let rowSize = 100 in -- (worldSize/rowSize) / cores == whole number ?
+	let worldSize = 100 in
+	let rowSize = 10 in
   let world = initWorld worldSize in
   printWorld world rowSize rowSize;
   printStringLn " ";
@@ -734,8 +733,8 @@ initWorld n = if n == 0
               else Tile n (multiplesThree n) (initWorld (n-1))
 
 ----
+-- Used to randomize alive cells at the start of the simulation
 -- Returns true if n is a multiple of 3
--- used to randamize alive cells at the start of the simulatio
 ---
 multiplesThree : Int -> Bool
 multiplesThree n = (mod n 3) == 0
@@ -776,7 +775,7 @@ printRow world =
     }
 
 ----
--- Prints a IntList
+-- Prints an IntList
 ---
 printList : IntList -> ()
 printList numNeightbours =

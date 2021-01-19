@@ -1,19 +1,20 @@
 {-
---Module      :  Conway's Game of Life
---Description :  Parallelization of Conway's Game of Life algorithm
---Authores    :  Diogo Soares Nº 44935; Marta Correia Nº 51022
+-- Module      :  Conway's Game of Life
+-- Description :  Parallelization of Conway's Game of Life algorithm
+-- Authores    :  Diogo Soares Nº 44935; Marta Correia Nº 51022
 --
---The following is an attempt at parallazing Conway's Game of Life algorithm by
---dividing the world matrix in n rows and processing each row on a diffente thread.
---Each thread will apply the algorithm to each row individually, taking into account
---it's neightbouring upper and bottom rows, threads communicate via channels to exchange
---their rows
+-- The following it's a parallel way of implementating Conway's Game of Life algorithm by
+-- dividing the world matrix in n rows and processing each row on a diffente thread.
+-- Each thread will then apply the algorithm to each row individually, taking into account
+-- it's neightbouring upper and bottom rows, and communicating with those threads via channels
+-- to exchange their rows
  -}
 
--- Represents a linked list of bools
+-- Represents a linked list of Tiles, that represent a cell, which is made of an index (Int)
+-- and a state (Bool)
 data World = Nil | Tile Int Bool World
 
--- A simple linked int list, used to store the number of neighbors around a tile
+-- Represents a linked list of Numbers, that represent the number of neighbors of a cell
 data IntList = Nul | Number Int IntList
 
 -- Channel used to transfer objects inside of World
@@ -30,7 +31,7 @@ type WorldChannel : SL =
        Nil : Skip
   	}
 
--- Channel used to transfer Ints inside of a IntList
+-- Channel used to transfer Ints inside of an IntList
 type NumberChannel : SL =
 	&{ Num : !Int; NumberChannel,
 	   Next : +{ Number: NumberChannel,
@@ -39,7 +40,7 @@ type NumberChannel : SL =
 	   Exit : Skip
 	}
 
--- Channel used to transfer a IntList
+-- Channel used to transfer an IntList
 type IntListChannel : SL =
 	+{ Number: NumberChannel,
 	     Nul : Skip
@@ -50,8 +51,8 @@ type IntListChannel : SL =
 ----------------------------------------------------------------------------------------
 
 ---
---It will iterate recursively over a World linked list,
---callig clietTile for each tile in the list
+-- It will iterate recursively over a World linked list,
+-- callig clientTile for each tile in the list
 ---
 clientWorld : forall a:SL => WorldChannel; a -> World -> a
 clientWorld c world =
@@ -63,8 +64,8 @@ clientWorld c world =
       }
 
 ---
---For each TileChannel channel this function receives it will send to the other
---end of the channel the index and state that represent a World Tile
+-- For each TileChannel channel this function receives, it will send to the other
+-- end of the channel the index and state that represent a World Tile
 ---
 clientTile : forall a:SL => TileChannel; a -> Int -> Bool -> World -> a
 clientTile c index state next =
@@ -81,7 +82,7 @@ clientTile c index state next =
     }
 
 ---
---Simillar to clientWorld but for IntLists linked lists
+-- Similar to clientWorld but for IntLists linked lists
 ---
 clientList : forall a:SL => IntListChannel; a -> IntList -> a
 clientList c numNeighbors =
@@ -92,10 +93,9 @@ clientList c numNeighbors =
 				clientNumber[a] (select Number c) num next
       }
 
-
 ---
---Simillar to clientTile but passes to the other end of the channel a Int num
---that represents a Number in the IntList
+-- Similar to clientTile but passes to the other end of the channel an Int number
+-- that represents a Number in the IntList
 ---
 clientNumber : forall a:SL => NumberChannel; a -> Int -> IntList -> a
 clientNumber c num next =
@@ -114,9 +114,9 @@ clientNumber c num next =
 ----------------------------------------------------------------------------------------
 
 ---
---Depeding o the state of the dualof channel received if its a Tile was send
---throw the channel it will call serverTile to process it.
---returns the complet received world
+-- Depending o the state of the dualof channel received, if a Tile was send
+-- through the channel, it will call serverTile to process it
+-- Returns the complete received world
 ---
 serverWorld : forall a:SL => dualof WorldChannel; a -> (World, a)
 serverWorld s =
@@ -129,8 +129,9 @@ serverWorld s =
     }
 
 ---
---Given a dualof TileChannel, it will wait to receive the index and state from the other end of the channel and
---recursively recostruct the world being send throw the channels.
+-- Given a dualof TileChannel, it will wait to receive the index and state from
+-- the other end of the channel and recursively reconstruct the world being
+-- send through the channels
 ---
 serverTile : forall a:SL => dualof TileChannel; a -> (World, a)
 serverTile s =
@@ -141,7 +142,7 @@ serverTile s =
         (Tile index state next, select Exit s)
 
 ---
---Simillar to serverWorld but for IntLists linked lists
+-- Similar to serverWorld but for IntLists linked lists
 ---
 serverList : forall a:SL => dualof IntListChannel; a -> (IntList, a)
 serverList s =
@@ -154,7 +155,7 @@ serverList s =
     }
 
 ---
---Simillar to serverTile but it will recostruct a Intlist
+-- Simillar to serverTile but it will recostruct an Intlist
 ---
 serverNumber : forall a:SL => dualof NumberChannel; a -> (IntList, a)
 serverNumber s =
@@ -168,9 +169,9 @@ serverNumber s =
 ----------------------------------------------------------------------------------------
 
 ---
---Given a number of generations (iterations), this function will call splitwork
---to generate the next generation of the game of life,
---returns the end resulto of each generate.
+-- Given a number of generations (iterations), this function will call splitwork
+-- to generate the next generation of the game of life
+-- Returns the end result of each generate
 ---
 generations : Int -> Int -> Int -> World -> World
 generations iterations size rowSize world =
@@ -194,17 +195,18 @@ generations iterations size rowSize world =
 --  ...
 --[bottom]
 --
---This recursive function will split the given linked list world in n parts of rowSize, each of these
---n part will be given to a subserver running on a new thread, it will also create 2 IntListChannels and a WorldChannel
---for each subserver, the former are to pass information between subserver during calculation, the latter is used by
---each subserver to return the result world up the subserver chain. This subserver are created recursively and are chained linked
---by the channels.
+-- This recursive function will split the given linked list world in n parts of rowSize. Each of these
+-- n parts will be given to a subserver running on a new thread. It will also create 2 IntListChannels
+-- and a WorldChannel for each subserver. The former are to pass information between subservers during
+-- calculation, the later is used by each subserver to return the result world up the subserver chain.
+-- These subservers are created recursively and are a chained linked by the channels
 --
---topRead: the receiving end of a IntListChannel created by the recursive parent of this current recursive iteration
---world: a world liked list
---size: number of row
---rowSize: size of each row
---retuns a pair composed of the receiving end of bottom liked subserver IntListChannel and WorldChannel
+-- topRead: the receiving end of a IntListChannel created by the recursive parent of this current
+-- recursive iteration
+-- world: a world linked list
+-- size: number of rows
+-- rowSize: size of each row
+-- Retuns a pair composed of the receiving end of bottom liked subserver IntListChannel and WorldChannel
 ---
 splitWork : dualof IntListChannel -> World -> Int -> Int -> Int -> (dualof IntListChannel, dualof WorldChannel)
 splitWork topRead world index size rowSize =
@@ -239,9 +241,9 @@ splitWork topRead world index size rowSize =
 	    (read, read3)
 
 ---
---Given a linked list and a rowSize this function will split the list at rowSize
---returs a pair containing the a list of the first rowSize elemests of world
---and the remaing world list without those first rowSize elemests
+-- Given a linked list and a rowSize, this function will split the list at rowSize
+-- Returs a pair containing a list of the first rowSize elements of world
+-- and the remaing world list without those first rowSize elements
 ---
 splitRow : World -> Int -> (World, World)
 splitRow world rowSize =
@@ -257,11 +259,11 @@ splitRow world rowSize =
 		}
 
 ---
---Subserver that will apply the Gol algorithm to the upper row of the world list,
---after receiving the rowBottom (number neighbors list) from down the subserver chain
---and sending numNeighborsWithSelf down the subserver chain with the IntListChannels,
---it will call generateEdge to apply the rules of Gol to row. The result process row is then send
---up the subserver chain using the WorldChannel (In this case the main thread).
+-- Subserver that will apply the Gol algorithm to the upper row of the world list,
+-- after receiving the rowBottom (number neighbors list) from down the subserver chain
+-- and sending numNeighborsWithSelf down the subserver chain with the IntListChannels.
+-- It will call generateEdge to apply the rules of Gol to row. The result process row is then send
+-- up the subserver chain using the WorldChannel (In this case, the main thread).
 ---
 subserverTop : World -> dualof IntListChannel -> dualof WorldChannel -> IntListChannel -> IntListChannel -> WorldChannel -> ()
 subserverTop row bottomRead bottomRead2 write write2 write3 =
@@ -276,11 +278,12 @@ subserverTop row bottomRead bottomRead2 write write2 write3 =
 		()
 
 ---
---Subserver that will apply the Gol algorithm to the middle rows of the world list,
---After receiving the IntLists topRow (number neighbors list) from up the subserver chain and
---the rowBottom (number neighbors list) from down the subserver chain and sending numNeighborsWithSelf
---up and down the subserver chain with the IntListChannels, it will call generateMiddle to apply the rules
---of Gol to row. The result process row is then send up the subserver chain using the WorldChannel.
+-- Subserver that will apply the Gol algorithm to the middle rows of the world list,
+-- after receiving the IntLists topRow (number neighbors list) from up the subserver chain and
+-- the rowBottom (number neighbors list) from down the subserver chain and sending numNeighborsWithSelf
+-- up and down the subserver chain with the IntListChannels. It will then call generateMiddle to
+-- apply the rules of Gol to row. The result process row is then send up the subserver
+-- chain using the WorldChannel
 ---
 subserver : World -> dualof IntListChannel -> dualof IntListChannel -> dualof WorldChannel  -> IntListChannel -> IntListChannel -> WorldChannel -> ()
 subserver row topRead bottomRead bottomRead2 write write2 write3 =
@@ -296,11 +299,11 @@ subserver row topRead bottomRead bottomRead2 write write2 write3 =
 		()
 
 ---
---Subserver that will apply the Gol algorithm to the bottom row of the world list,
---after receiving the rowTop (number neighbors list) from up the subserver chain
---and sending numNeighborsWithSelf up the subserver chain with the IntListChannels,
---it will call generateEdge to apply the rules of Gol to row. The result process row is then send
---up the subserver chain using the WorldChannel.
+-- Subserver that will apply the Gol algorithm to the bottom row of the world list,
+-- after receiving the rowTop (number neighbors list) from up the subserver chain
+-- and sending numNeighborsWithSelf up the subserver chain with the IntListChannels.
+-- It will then call generateEdge to apply the rules of Gol to row. The result process
+-- row is then send up the subserver chain using the WorldChanne
 ---
 subserverBottom : World -> dualof IntListChannel -> IntListChannel -> WorldChannel -> ()
 subserverBottom row topRead write write2 =
@@ -313,7 +316,7 @@ subserverBottom row topRead write write2 =
 		()
 
 ---
---Simple function that concats two linked World lists
+-- Simple function that concats two linked World lists
 ---
 concat : World -> World -> World
 concat xs ys =
@@ -323,8 +326,8 @@ concat xs ys =
   }
 
 ---
---It will zip sum these the 2 lists given and call gameOfLife function to apply the rules of Gol
---to the row with that sumed list of neighbors.
+-- It will zip sum these the 2 lists given and call gameOfLife function to apply the rules of Gol
+-- to the row with that summed list of neighbors
 ---
 generateEdge : IntList -> IntList -> World -> World
 generateEdge numNeighbors otherRow row =
@@ -332,20 +335,20 @@ generateEdge numNeighbors otherRow row =
 		gameOfLife row numNeighborsList
 
 ---
---It will zip sum these the 3 lists given and call gameOfLife function to apply the rules of Gol
---to the row with that sumed list of neighbors.
+-- It will zip sum these the 3 lists given and call gameOfLife function to apply the rules of Gol
+-- to the row with that summed list of neighbors
 ---
 generateMiddle : IntList -> IntList -> IntList -> World -> World
 generateMiddle rowTop numNeighbors rowBottom row =
 		let numNeighborsList = zipSum rowTop numNeighbors rowBottom in
 		gameOfLife row numNeighborsList
 
-
 ---
 --[l][i][r]
---For each tile in the row, it will count if l i and r are alive and place that number in i.
---countSelf: If i is alive and this is true, i will be counted.
---returns a list of all the alive tiles for each (l, i, r) group
+-- For each tile in the row, it will count if l, i and r are alive and place that number in i.
+-- countSelf: If i is alive and this is true, i will be counted; otherwise, it will only counted
+-- l and r as a neighbor to the cell
+-- Returns a list of all the alive tiles for each (l, i, r) group
 ---
 countRowNeighbors : World -> World -> Bool -> IntList
 countRowNeighbors left current countSelf =
@@ -413,7 +416,7 @@ countRowNeighbors left current countSelf =
 		}
 
 ---
---Takes 3 IntList zips them into 1 IntList, by suming all the same index values
+-- Takes 3 IntList and zips them into 1 IntList, by suming all the same index values
 ---
 zipSum : IntList -> IntList -> IntList -> IntList
 zipSum top middle bottom =
@@ -433,7 +436,7 @@ zipSum top middle bottom =
 	}
 
 ---
---Creates a new linked list IntList that is the zip sum of two Intlist lists
+-- Takes 2 IntList and zips them into 1 IntList, by suming all the same index values
 ---
 zipSumEdge : IntList -> IntList -> IntList
 zipSumEdge middle other =
@@ -449,8 +452,8 @@ zipSumEdge middle other =
 	}
 
 ---
--- Given a List of World tiles and a list of number of neighbors, both with the same size
--- Will calculete the next state of a tile acording to the same index number of neighbors
+-- Given a List of World tiles and a list of number of neighbors, both with the same size,
+-- it will calculate the next state of a tile acording to the same index number of neighbors
 -- from the "numNeighborsList"
 ---
 gameOfLife : World -> IntList -> World
@@ -468,8 +471,8 @@ gameOfLife row numNeighborsList =
 		}
 
 ---
---Applies the Game of life rules given a number of neighbors and current state
---returs the next correct state
+-- Applies the Game of life rules given a number of neighbors and current state
+-- Returs the next correct state
 ---
 applyGoLRules : Int -> Bool -> Bool
 applyGoLRules numNeighbors alive =
@@ -483,11 +486,8 @@ applyGoLRules numNeighbors alive =
 ----------------------------------------------------------------------------------------
 
 ----
---Main:
---Iniciates the world
---Prints the inicial worldSize
---Calls generations to apply the algorithm
---Prints the end result world
+-- Iniciates the world, prints the inicial worldSize and calls generations to apply
+-- the algorithm
 ---
 main : String
 main =
@@ -501,7 +501,7 @@ main =
 	let _ = generations numOfGenerations worldSize rowSize (world) in " "
 
 ----
---Creates a liked list of size n, representing the world
+-- Creates a linked list of size n, representing the world
 ---
 initWorld : Int -> World
 initWorld n = if n == 0
@@ -509,14 +509,14 @@ initWorld n = if n == 0
               else Tile n (multiplesThree n) (initWorld (n-1))
 
 ----
---Returns true if n is a multiple of 3
---used to randamize alive cells at the start of the simulatio
+-- Used to randomize alive cells at the start of the simulation
+-- Returns true if n is a multiple of 3
 ---
 multiplesThree : Int -> Bool
 multiplesThree n = (mod n 3) == 0
 
 ----
---Prints a matrix representing the world
+-- Prints a matrix representing the world
 ---
 printWorld : World -> Int -> Int -> ()
 printWorld world rowSize i =
@@ -536,7 +536,7 @@ printWorld world rowSize i =
     }
 
 ----
---Prints a single row of the world
+-- Prints a single row of the world
 ---
 printRow : World -> ()
 printRow world =
@@ -551,7 +551,7 @@ printRow world =
     }
 
 ----
---Prints a IntList
+-- Prints an IntList
 ---
 printList : IntList -> ()
 printList numNeightbours =
@@ -563,7 +563,7 @@ printList numNeightbours =
 	}
 
 ----
---Transforms a Skip (SU) in to a ()(TU)
+-- Transforms a Skip (SU) in to a ()(TU)
 ---
 sink : Skip -> ()
 sink _ = ()
